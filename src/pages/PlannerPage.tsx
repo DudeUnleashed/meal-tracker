@@ -14,7 +14,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Calendar, { VIEWS, type CalendarView } from "../components/Calendar";
 import { PlannerActionsContext, type DragData, type PlannerActions } from "../components/calendar/actions";
 import { ChipBody } from "../components/calendar/cells";
+import ItemDrawer from "../components/ItemDrawer";
 import ItemLibrary, { CardPreview } from "../components/ItemLibrary";
+import PlanEntryPopover from "../components/PlanEntryPopover";
 import { api, errorMessage, type PlanEntry } from "../lib/api";
 import type { WeekStart } from "../lib/dates";
 
@@ -39,6 +41,8 @@ export default function PlannerPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [dragging, setDragging] = useState<DragData | null>(null);
+  const [popover, setPopover] = useState<{ entry: PlanEntry; anchor: DOMRect } | null>(null);
+  const [drawerItemId, setDrawerItemId] = useState<number | null>(null);
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -78,11 +82,15 @@ export default function PlannerPage() {
       changeServes: (entry: PlanEntry, serves: number) =>
         mutate(() => api.plan.update(entry.id, { serves })),
       removeEntry: (entry: PlanEntry) => mutate(() => api.plan.remove(entry.id)),
+      openEntry: (entry: PlanEntry, anchor: DOMRect) => setPopover({ entry, anchor }),
     }),
     [mutate],
   );
 
+  const reload = useCallback(() => setRefreshKey((k) => k + 1), []);
+
   function onDragStart(e: DragStartEvent) {
+    setPopover(null);
     setDragging((e.active.data.current as DragData) ?? null);
   }
 
@@ -142,9 +150,23 @@ export default function PlannerPage() {
               )}
             </div>
           </section>
-          <ItemLibrary />
+          <ItemLibrary refreshKey={refreshKey} />
         </div>
       </PlannerActionsContext.Provider>
+
+      {popover && (
+        <PlanEntryPopover
+          key={popover.entry.id}
+          entry={popover.entry}
+          anchor={popover.anchor}
+          onClose={() => setPopover(null)}
+          onChanged={reload}
+          onEditItem={setDrawerItemId}
+        />
+      )}
+      {drawerItemId !== null && (
+        <ItemDrawer itemId={drawerItemId} onClose={() => setDrawerItemId(null)} onChanged={reload} />
+      )}
 
       <DragOverlay dropAnimation={null}>
         {dragging?.kind === "item" && <CardPreview name={dragging.name} colour={dragging.colour} />}

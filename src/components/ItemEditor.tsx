@@ -1,8 +1,11 @@
+import { format } from "date-fns";
 import { useEffect, useState } from "react";
+import { fromIso, toIso } from "../lib/dates";
 import {
   api,
   errorMessage,
   ITEM_TYPES,
+  type HistoryEntry,
   type Ingredient,
   type IngredientCategory,
   type Item,
@@ -117,6 +120,15 @@ export default function ItemEditor({
     return () => {
       cancelled = true;
     };
+  }, [itemId]);
+
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  useEffect(() => {
+    if (itemId === null) return;
+    api.items
+      .history(itemId)
+      .then(setHistory)
+      .catch(() => setHistory([]));
   }, [itemId]);
 
   const dirty = draft !== null && snapshot(draft) !== saved;
@@ -366,6 +378,34 @@ export default function ItemEditor({
             + Add ingredient
           </button>
         </section>
+
+        {itemId !== null && (
+          <section>
+            <h3 className="mb-1 text-sm font-semibold">History</h3>
+            {history.length === 0 ? (
+              <p className="text-sm text-slate-400">Not planned yet.</p>
+            ) : (
+              <ul className="max-h-56 divide-y divide-slate-100 overflow-auto rounded border border-slate-200 bg-white text-sm">
+                {history.map((h) => (
+                  <li key={h.entry_id} className="px-3 py-1.5">
+                    <div className="flex items-baseline gap-2">
+                      <span>{format(fromIso(h.date), "EEE d MMM yyyy")}</span>
+                      {h.serves !== null && (
+                        <span className="text-xs text-slate-500">{h.serves} serves</span>
+                      )}
+                      {h.date >= toIso(new Date()) && (
+                        <span className="rounded bg-emerald-50 px-1.5 text-xs text-emerald-700">
+                          planned
+                        </span>
+                      )}
+                    </div>
+                    {h.note && <div className="text-xs text-amber-800">📝 {h.note}</div>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-slate-200 bg-white px-4 py-3">

@@ -113,6 +113,24 @@ export interface PlanEntry {
   position: number;
 }
 
+/** When an item was last had / is next planned, and the note most recently left on it. */
+export interface ItemUsage {
+  item_id: number;
+  /** Most recent date before today. */
+  last_had: string | null;
+  /** Earliest date today or later. */
+  next_planned: string | null;
+  latest_note: string | null;
+  latest_note_date: string | null;
+}
+
+export interface HistoryEntry {
+  entry_id: number;
+  date: string;
+  serves: number | null;
+  note: string | null;
+}
+
 export type Settings = Record<string, string>;
 
 export const api = {
@@ -142,6 +160,10 @@ export const api = {
     duplicate: (id: number) => invoke<Item>("items_duplicate", { id }),
     archive: (id: number, archived: boolean) =>
       invoke<Item>("items_archive", { id, archived }),
+    /** Usage for every item that has been planned; `today` is a local ISO date. */
+    usage: (today: string) => invoke<ItemUsage[]>("items_usage", { today }),
+    /** Every plan entry for the item, newest first. */
+    history: (id: number) => invoke<HistoryEntry[]>("items_history", { id }),
   },
   plan: {
     list: (start: string, end: string) => invoke<PlanEntry[]>("plan_list", { start, end }),

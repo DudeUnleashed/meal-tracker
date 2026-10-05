@@ -5,11 +5,14 @@ import type { PlanEntry } from "../../lib/api";
 export interface PlannerActions {
   changeServes: (entry: PlanEntry, serves: number) => void;
   removeEntry: (entry: PlanEntry) => void;
+  /** Open the details popover next to the clicked chip. */
+  openEntry: (entry: PlanEntry, anchor: DOMRect) => void;
 }
 
 export const PlannerActionsContext = createContext<PlannerActions>({
   changeServes: () => {},
   removeEntry: () => {},
+  openEntry: () => {},
 });
 
 export const usePlannerActions = () => useContext(PlannerActionsContext);

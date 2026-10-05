@@ -26,6 +26,8 @@ pub fn run() {
             commands::items::items_duplicate,
             commands::items::items_archive,
             commands::summary::summary_get,
+            commands::usage::items_usage,
+            commands::usage::items_history,
             commands::plan::plan_list,
             commands::plan::plan_add,
             commands::plan::plan_move,

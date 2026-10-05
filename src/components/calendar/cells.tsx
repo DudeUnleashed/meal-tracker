@@ -108,7 +108,7 @@ function EntryChip({ entry, index }: { entry: PlanEntry; index: number }) {
   const data: DragData = { kind: "entry", entryId: entry.id, date: entry.date, index, entry };
   const drag = useDraggable({ id: `entry:${entry.id}`, data });
   const drop = useDroppable({ id: `entry-drop:${entry.id}`, data });
-  const { changeServes, removeEntry } = usePlannerActions();
+  const { changeServes, removeEntry, openEntry } = usePlannerActions();
 
   return (
     <div
@@ -118,6 +118,8 @@ function EntryChip({ entry, index }: { entry: PlanEntry; index: number }) {
       }}
       {...drag.listeners}
       {...drag.attributes}
+      // A click (not a drag — dnd-kit swallows the click that ends a drag) opens the details popover.
+      onClick={(e) => openEntry(entry, e.currentTarget.getBoundingClientRect())}
       className={`touch-none ${drag.isDragging ? "opacity-30" : ""} ${
         drop.isOver && !drag.isDragging ? "ring-2 ring-emerald-400" : ""
       }`}
@@ -158,7 +160,10 @@ export function ChipBody({ entry, onServes, onRemove }: ChipBodyProps) {
         {onRemove && (
           <button
             type="button"
-            onClick={onRemove}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
             aria-label={`Remove ${entry.item_name}`}
             title="Remove"
             className="shrink-0 px-0.5 text-slate-300 opacity-0 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
@@ -173,7 +178,10 @@ export function ChipBody({ entry, onServes, onRemove }: ChipBodyProps) {
             <>
               <button
                 type="button"
-                onClick={() => onServes(entry.serves! - 1)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onServes(entry.serves! - 1);
+                }}
                 disabled={entry.serves <= 1}
                 aria-label="Fewer serves"
                 className="h-4 w-4 rounded bg-slate-200 leading-none hover:bg-slate-300 disabled:opacity-40"
@@ -183,7 +191,10 @@ export function ChipBody({ entry, onServes, onRemove }: ChipBodyProps) {
               <span className="min-w-8 text-center font-medium">{entry.serves} serves</span>
               <button
                 type="button"
-                onClick={() => onServes(entry.serves! + 1)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onServes(entry.serves! + 1);
+                }}
                 aria-label="More serves"
                 className="h-4 w-4 rounded bg-slate-200 leading-none hover:bg-slate-300"
               >
