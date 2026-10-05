@@ -11,6 +11,7 @@ pub fn run() {
         .setup(|app| {
             let db = db::init(app.handle())?;
             app.manage(db);
+            app.manage(commands::undo::UndoStack::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -43,6 +44,14 @@ pub fn run() {
             commands::plan::plan_update,
             commands::plan::plan_copy_range,
             commands::plan::plan_remove,
+            commands::undo::plan_undo,
+            commands::undo::plan_undo_peek,
+            commands::dayinfo::day_info_list,
+            commands::dayinfo::day_info_set,
+            commands::dayinfo::day_leftovers_move,
+            commands::data::data_sample_counts,
+            commands::data::data_remove_sample,
+            commands::data::data_erase_all,
             commands::settings::settings_get,
             commands::settings::settings_set,
         ])

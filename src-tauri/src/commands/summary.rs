@@ -15,6 +15,8 @@ pub struct Source {
     pub date: String,
     /// Serves on the entry (meat items only).
     pub serves: Option<i64>,
+    /// Size multiplier on a meal or side entry; only present when it isn't the usual 1.
+    pub scale: Option<f64>,
     /// Quantity this entry adds, in the ingredient's unit (already scaled by serves).
     pub quantity: f64,
 }
@@ -70,7 +72,7 @@ pub fn summary(conn: &Connection, start: &str, end: &str) -> Result<Summary, Str
     let mut stmt = conn
         .prepare(
             "SELECT g.id, g.name, g.unit, c.id, c.name, c.sort_order,
-                    i.id, i.name, i.type, pe.date, pe.serves, ii.quantity
+                    i.id, i.name, i.type, pe.date, pe.serves, ii.quantity, pe.scale
              FROM plan_entry pe
              JOIN item i ON i.id = pe.item_id
              JOIN item_ingredient ii ON ii.item_id = i.id
@@ -91,11 +93,14 @@ pub fn summary(conn: &Connection, start: &str, end: &str) -> Result<Summary, Str
         let item_type: String = r.get(8).map_err(|e| e.to_string())?;
         let serves: Option<i64> = r.get(10).map_err(|e| e.to_string())?;
         let line_quantity: f64 = r.get(11).map_err(|e| e.to_string())?;
+        let entry_scale: f64 = r.get(12).map_err(|e| e.to_string())?;
 
         let is_meat = item_type == "meat";
-        // Serves is required for meat; fall back to 1 so bad data can't silently drop a line.
-        let factor = if is_meat { serves.unwrap_or(1) as f64 } else { 1.0 };
+        // Meat scales by serves (required; fall back to 1 so bad data can't silently drop a
+        // line). Meals and sides are one night's amount times the entry's size multiplier.
+        let factor = if is_meat { serves.unwrap_or(1) as f64 } else { entry_scale };
         let quantity = line_quantity * factor;
+        let shown_scale = (!is_meat && (entry_scale - 1.0).abs() > f64::EPSILON).then_some(entry_scale);
 
         let slot = match index.get(&ingredient_id) {
             Some(&i) => i,
@@ -121,6 +126,7 @@ pub fn summary(conn: &Connection, start: &str, end: &str) -> Result<Summary, Str
             item_name: r.get(7).map_err(|e| e.to_string())?,
             date: r.get(9).map_err(|e| e.to_string())?,
             serves: if is_meat { serves } else { None },
+            scale: shown_scale,
             quantity,
         });
     }
@@ -232,6 +238,25 @@ mod tests {
         assert_eq!(row(&s, "Steak").quantity, 750.0);
         assert_eq!(row(&s, "Frozen chips").quantity, 600.0);
         assert_eq!(row(&s, "Lettuce").quantity, 1.0);
+    }
+
+    #[test]
+    fn entry_size_multiplies_meals_and_sides_but_not_meat() {
+        let conn = test_conn();
+        let bol = crate::commands::plan::add(&conn, item_id(&conn, "Spag bol"), "2026-10-06", None).unwrap();
+        crate::commands::plan::update_with(&conn, bol.id, None, None, Some(1.5)).unwrap();
+        let chips = crate::commands::plan::add(&conn, item_id(&conn, "Chips"), "2026-10-06", None).unwrap();
+        crate::commands::plan::update_with(&conn, chips.id, None, None, Some(2.0)).unwrap();
+        plan(&conn, "2026-10-07", "Spag bol", None); // a normal-sized one too
+
+        let s = summary(&conn, WEEK.0, WEEK.1).unwrap();
+        assert_eq!(row(&s, "Beef mince").quantity, 1250.0); // 500*1.5 + 500
+        assert_eq!(row(&s, "Frozen chips").quantity, 1200.0);
+        let beef = row(&s, "Beef mince");
+        assert_eq!(beef.sources[0].scale, Some(1.5));
+        assert_eq!(beef.sources[1].scale, None, "usual size isn't called out");
+        // each totals still round up after scaling: 1 onion * 1.5 + 1 = 2.5 -> 3
+        assert_eq!(row(&s, "Onion").quantity, 3.0);
     }
 
     #[test]

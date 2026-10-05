@@ -1,9 +1,12 @@
 pub mod backup;
 pub mod categories;
+pub mod data;
+pub mod dayinfo;
 pub mod ingredients;
 pub mod items;
 pub mod plan;
 pub mod settings;
 pub mod summary;
 pub mod templates;
+pub mod undo;
 pub mod usage;

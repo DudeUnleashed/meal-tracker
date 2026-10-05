@@ -26,12 +26,16 @@ struct IngredientRow {
     category_id: i64,
     unit: String,
     archived: bool,
+    #[serde(default)]
+    sample: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct TemplateRow {
     id: i64,
     name: String,
+    #[serde(default)]
+    sample: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -56,6 +60,8 @@ struct ItemRow {
     notes: Option<String>,
     template_id: Option<i64>,
     archived: bool,
+    #[serde(default)]
+    sample: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -75,6 +81,20 @@ struct PlanEntryRow {
     serves: Option<i64>,
     note: Option<String>,
     position: i64,
+    /// Older backups predate the size multiplier.
+    #[serde(default = "one")]
+    scale: f64,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct DayInfoRow {
+    date: String,
+    note: Option<String>,
+    leftovers: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -94,6 +114,9 @@ struct Backup {
     items: Vec<ItemRow>,
     item_ingredients: Vec<ItemIngredientRow>,
     plan_entries: Vec<PlanEntryRow>,
+    /// Absent in backups made before day notes existed.
+    #[serde(default)]
+    day_info: Vec<DayInfoRow>,
     settings: Vec<SettingRow>,
 }
 
@@ -127,17 +150,18 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
         categories: rows(conn, "SELECT id, name, sort_order FROM ingredient_category ORDER BY id", |r| {
             Ok(CategoryRow { id: r.get(0)?, name: r.get(1)?, sort_order: r.get(2)? })
         })?,
-        ingredients: rows(conn, "SELECT id, name, category_id, unit, archived FROM ingredient ORDER BY id", |r| {
+        ingredients: rows(conn, "SELECT id, name, category_id, unit, archived, sample FROM ingredient ORDER BY id", |r| {
             Ok(IngredientRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 category_id: r.get(2)?,
                 unit: r.get(3)?,
                 archived: r.get::<_, i64>(4)? != 0,
+                sample: r.get::<_, i64>(5)? != 0,
             })
         })?,
-        templates: rows(conn, "SELECT id, name FROM template ORDER BY id", |r| {
-            Ok(TemplateRow { id: r.get(0)?, name: r.get(1)? })
+        templates: rows(conn, "SELECT id, name, sample FROM template ORDER BY id", |r| {
+            Ok(TemplateRow { id: r.get(0)?, name: r.get(1)?, sample: r.get::<_, i64>(2)? != 0 })
         })?,
         template_lines: rows(
             conn,
@@ -158,7 +182,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
         )?,
         items: rows(
             conn,
-            "SELECT id, name, type, colour, notes, template_id, archived FROM item ORDER BY id",
+            "SELECT id, name, type, colour, notes, template_id, archived, sample FROM item ORDER BY id",
             |r| {
                 Ok(ItemRow {
                     id: r.get(0)?,
@@ -168,6 +192,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                     notes: r.get(4)?,
                     template_id: r.get(5)?,
                     archived: r.get::<_, i64>(6)? != 0,
+                    sample: r.get::<_, i64>(7)? != 0,
                 })
             },
         )?,
@@ -186,7 +211,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
         )?,
         plan_entries: rows(
             conn,
-            "SELECT id, date, item_id, serves, note, position FROM plan_entry ORDER BY id",
+            "SELECT id, date, item_id, serves, note, position, scale FROM plan_entry ORDER BY id",
             |r| {
                 Ok(PlanEntryRow {
                     id: r.get(0)?,
@@ -195,9 +220,13 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                     serves: r.get(3)?,
                     note: r.get(4)?,
                     position: r.get(5)?,
+                    scale: r.get(6)?,
                 })
             },
         )?,
+        day_info: rows(conn, "SELECT date, note, leftovers FROM day_info ORDER BY date", |r| {
+            Ok(DayInfoRow { date: r.get(0)?, note: r.get(1)?, leftovers: r.get::<_, i64>(2)? != 0 })
+        })?,
         settings: rows(conn, "SELECT key, value FROM setting ORDER BY key", |r| {
             Ok(SettingRow { key: r.get(0)?, value: r.get(1)? })
         })?,
@@ -221,6 +250,7 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     // Children before parents so foreign keys hold while clearing.
     for table in [
         "plan_entry",
+        "day_info",
         "item_ingredient",
         "template_line",
         "item",
@@ -242,14 +272,18 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for i in &b.ingredients {
         tx.execute(
-            "INSERT INTO ingredient (id, name, category_id, unit, archived) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![i.id, i.name, i.category_id, i.unit, i.archived],
+            "INSERT INTO ingredient (id, name, category_id, unit, archived, sample)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![i.id, i.name, i.category_id, i.unit, i.archived, i.sample],
         )
         .map_err(|e| err("ingredients", e))?;
     }
     for t in &b.templates {
-        tx.execute("INSERT INTO template (id, name) VALUES (?1, ?2)", params![t.id, t.name])
-            .map_err(|e| err("templates", e))?;
+        tx.execute(
+            "INSERT INTO template (id, name, sample) VALUES (?1, ?2, ?3)",
+            params![t.id, t.name, t.sample],
+        )
+        .map_err(|e| err("templates", e))?;
     }
     for l in &b.template_lines {
         tx.execute(
@@ -262,9 +296,9 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for i in &b.items {
         tx.execute(
-            "INSERT INTO item (id, name, type, colour, notes, template_id, archived)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![i.id, i.name, i.item_type, i.colour, i.notes, i.template_id, i.archived],
+            "INSERT INTO item (id, name, type, colour, notes, template_id, archived, sample)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![i.id, i.name, i.item_type, i.colour, i.notes, i.template_id, i.archived, i.sample],
         )
         .map_err(|e| err("items", e))?;
     }
@@ -278,11 +312,18 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for p in &b.plan_entries {
         tx.execute(
-            "INSERT INTO plan_entry (id, date, item_id, serves, note, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![p.id, p.date, p.item_id, p.serves, p.note, p.position],
+            "INSERT INTO plan_entry (id, date, item_id, serves, note, position, scale)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![p.id, p.date, p.item_id, p.serves, p.note, p.position, p.scale],
         )
         .map_err(|e| err("the plan", e))?;
+    }
+    for d in &b.day_info {
+        tx.execute(
+            "INSERT INTO day_info (date, note, leftovers) VALUES (?1, ?2, ?3)",
+            params![d.date, d.note, d.leftovers],
+        )
+        .map_err(|e| err("day notes", e))?;
     }
     for s in &b.settings {
         settings::set(&tx, &s.key, &s.value)?;
@@ -305,6 +346,16 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     })
 }
 
+/// Writes a timestamped backup into `dir` (created if needed) and returns its path. Used as a
+/// safety net before destructive actions such as wiping data.
+pub fn auto_backup(conn: &Connection, dir: &std::path::Path, reason: &str) -> Result<std::path::PathBuf, String> {
+    fs::create_dir_all(dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let path = dir.join(format!("{reason}-{stamp}.json"));
+    fs::write(&path, export_json(conn)?).map_err(|e| format!("Couldn't write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 #[tauri::command]
 pub fn backup_export(db: State<Db>, path: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -313,10 +364,16 @@ pub fn backup_export(db: State<Db>, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn backup_import(db: State<Db>, path: String) -> Result<ImportSummary, String> {
+pub fn backup_import(
+    db: State<Db>,
+    undo: State<super::undo::UndoStack>,
+    path: String,
+) -> Result<ImportSummary, String> {
     let json = fs::read_to_string(&path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    import_json(&conn, &json)
+    let summary = import_json(&conn, &json)?;
+    undo.clear(); // old snapshots refer to data that no longer exists
+    Ok(summary)
 }
 
 #[cfg(test)]
@@ -442,6 +499,60 @@ mod tests {
         let bad_setting = tamper(&|v| v["settings"][0]["value"] = "banana".into());
         assert!(import_json(&conn, &bad_setting).is_err());
         assert_eq!(comparable(&conn), before);
+    }
+
+    #[test]
+    fn day_info_scale_and_sample_flags_survive_a_restore() {
+        let source = lived_in();
+        let steak = plan::list(&source, "2026-10-06", "2026-10-06").unwrap();
+        let chips = steak.iter().find(|e| e.item_name == "Chips").unwrap().id;
+        plan::update_with(&source, chips, None, None, Some(1.5)).unwrap();
+        crate::commands::dayinfo::set(&source, "2026-10-07", Some("Alex working late"), Some(true)).unwrap();
+        source.execute("UPDATE item SET sample = 0 WHERE name = 'Chips'", []).unwrap();
+
+        let target = test_conn();
+        import_json(&target, &export_json(&source).unwrap()).unwrap();
+        let day = crate::commands::dayinfo::list(&target, "2026-10-07", "2026-10-07").unwrap();
+        assert_eq!((day[0].note.as_deref(), day[0].leftovers), (Some("Alex working late"), true));
+        let e = plan::list(&target, "2026-10-06", "2026-10-06").unwrap().into_iter().find(|e| e.item_name == "Chips").unwrap();
+        assert_eq!(e.scale, 1.5);
+        let sample: i64 = target.query_row("SELECT sample FROM item WHERE name = 'Chips'", [], |r| r.get(0)).unwrap();
+        assert_eq!(sample, 0);
+        assert_eq!(comparable(&source), comparable(&target));
+    }
+
+    #[test]
+    fn backups_from_before_these_features_still_import() {
+        let source = lived_in();
+        let mut v: serde_json::Value = serde_json::from_str(&export_json(&source).unwrap()).unwrap();
+        // Strip what older versions never wrote.
+        v.as_object_mut().unwrap().remove("day_info");
+        for e in v["plan_entries"].as_array_mut().unwrap() {
+            e.as_object_mut().unwrap().remove("scale");
+        }
+        for table in ["items", "ingredients", "templates"] {
+            for row in v[table].as_array_mut().unwrap() {
+                row.as_object_mut().unwrap().remove("sample");
+            }
+        }
+        let target = test_conn();
+        import_json(&target, &v.to_string()).unwrap();
+        let e = plan::list(&target, "2026-10-06", "2026-10-06").unwrap();
+        assert_eq!(e[0].scale, 1.0);
+        let samples: i64 = target.query_row("SELECT COUNT(*) FROM item WHERE sample = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(samples, 0, "old backups have no sample flags");
+    }
+
+    #[test]
+    fn auto_backup_writes_a_restorable_file() {
+        let source = lived_in();
+        let dir = std::env::temp_dir().join(format!("meal-planner-test-{}", std::process::id()));
+        let path = auto_backup(&source, &dir, "before-test").unwrap();
+        assert!(path.file_name().unwrap().to_string_lossy().starts_with("before-test-"));
+        let target = test_conn();
+        import_json(&target, &fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(comparable(&source), comparable(&target));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

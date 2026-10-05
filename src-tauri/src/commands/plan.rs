@@ -4,6 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::settings;
+use super::undo::{tracked, UndoStack};
 use crate::db::Db;
 
 #[derive(Serialize, Debug)]
@@ -19,6 +20,8 @@ pub struct PlanEntry {
     pub serves: Option<i64>,
     pub note: Option<String>,
     pub position: i64,
+    /// Size multiplier for meal and side entries (1.0 = the usual one night). Meat uses serves.
+    pub scale: f64,
 }
 
 fn parse_date(s: &str) -> Result<String, String> {
@@ -29,7 +32,7 @@ fn parse_date(s: &str) -> Result<String, String> {
 
 const SELECT: &str = "
     SELECT pe.id, pe.date, pe.item_id, i.name, i.type, i.colour, i.archived,
-           pe.serves, pe.note, pe.position
+           pe.serves, pe.note, pe.position, pe.scale
     FROM plan_entry pe
     JOIN item i ON i.id = pe.item_id";
 
@@ -45,6 +48,7 @@ fn from_row(r: &rusqlite::Row) -> rusqlite::Result<PlanEntry> {
         serves: r.get(7)?,
         note: r.get(8)?,
         position: r.get(9)?,
+        scale: r.get(10)?,
     })
 }
 
@@ -76,11 +80,24 @@ fn get(conn: &Connection, id: i64) -> Result<PlanEntry, String> {
 ///
 /// Meat entries take `serves`, falling back to the `default_meat_serves` setting.
 /// Meals and sides never carry serves.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn add(
     conn: &Connection,
     item_id: i64,
     date: &str,
     serves: Option<i64>,
+) -> Result<PlanEntry, String> {
+    add_at(conn, item_id, date, serves, None)
+}
+
+/// Like [`add`], but puts the entry at `position` in the day (0-based, clamped) instead of
+/// the end, so dropping onto a chip is a single step.
+pub fn add_at(
+    conn: &Connection,
+    item_id: i64,
+    date: &str,
+    serves: Option<i64>,
+    position: Option<i64>,
 ) -> Result<PlanEntry, String> {
     let date = parse_date(date)?;
     let (item_type, archived): (String, bool) = conn
@@ -110,7 +127,7 @@ pub fn add(
         None
     };
 
-    let position: i64 = conn
+    let end_position: i64 = conn
         .query_row(
             "SELECT COALESCE(MAX(position) + 1, 0) FROM plan_entry WHERE date = ?1",
             params![date],
@@ -119,10 +136,14 @@ pub fn add(
         .map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO plan_entry (date, item_id, serves, position) VALUES (?1, ?2, ?3, ?4)",
-        params![date, item_id, serves, position],
+        params![date, item_id, serves, end_position],
     )
     .map_err(|e| e.to_string())?;
-    get(conn, conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    match position {
+        Some(p) => move_entry(conn, id, &date, p),
+        None => get(conn, id),
+    }
 }
 
 /// Moves an entry to `date` at `position` (0-based; clamped to the end of that day).
@@ -177,13 +198,38 @@ fn renumber(conn: &Connection, ids: &[i64]) -> Result<(), String> {
 /// Changes serves (meat entries only) and/or the entry's note.
 ///
 /// `note: Some("")` (or whitespace) clears the note; `None` leaves it unchanged.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn update(
     conn: &Connection,
     id: i64,
     serves: Option<i64>,
     note: Option<&str>,
 ) -> Result<PlanEntry, String> {
+    update_with(conn, id, serves, note, None)
+}
+
+/// Largest "make it bigger" multiplier we accept (a sanity bound, not a real limit).
+const MAX_SCALE: f64 = 10.0;
+
+/// [`update`] plus the size multiplier for meal and side entries (`None` leaves it unchanged).
+pub fn update_with(
+    conn: &Connection,
+    id: i64,
+    serves: Option<i64>,
+    note: Option<&str>,
+    scale: Option<f64>,
+) -> Result<PlanEntry, String> {
     let entry = get(conn, id)?;
+    if let Some(sc) = scale {
+        if entry.item_type == "meat" {
+            return Err("Meat entries are sized by serves, not a multiplier".into());
+        }
+        if !(sc.is_finite() && sc > 0.0 && sc <= MAX_SCALE) {
+            return Err(format!("Size must be more than 0 and at most {MAX_SCALE}"));
+        }
+        conn.execute("UPDATE plan_entry SET scale = ?1 WHERE id = ?2", params![sc, id])
+            .map_err(|e| e.to_string())?;
+    }
     if let Some(n) = serves {
         if entry.item_type != "meat" {
             return Err("Only meat entries have serves".into());
@@ -213,8 +259,8 @@ pub struct CopyResult {
 }
 
 /// Copies every entry dated `src_start..=src_end` so the range starts on `dest_start` instead
-/// (the same weekday pattern, shifted). Serves are kept; notes are not — a note is a reminder
-/// for one particular night. Copies go to the end of their day, after anything already there.
+/// (the same weekday pattern, shifted). Serves and size are kept, and so are Leftovers markers
+/// (so "lasagna, then leftovers" repeats); notes are not, since a note is about one particular night. Copies go to the end of their day, after anything already there.
 pub fn copy_range(
     conn: &Connection,
     src_start: &str,
@@ -249,11 +295,17 @@ pub fn copy_range(
             )
             .map_err(|e| e.to_string())?;
         tx.execute(
-            "INSERT INTO plan_entry (date, item_id, serves, position) VALUES (?1, ?2, ?3, ?4)",
-            params![new_date, e.item_id, e.serves, position],
+            "INSERT INTO plan_entry (date, item_id, serves, position, scale) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![new_date, e.item_id, e.serves, position, e.scale],
         )
         .map_err(|e| e.to_string())?;
         result.copied += 1;
+    }
+    for day in super::dayinfo::list(&tx, &start, &end)? {
+        if day.leftovers {
+            let new_date = (parse(&day.date)? + offset).format("%Y-%m-%d").to_string();
+            super::dayinfo::set(&tx, &new_date, None, Some(true))?;
+        }
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(result)
@@ -269,6 +321,13 @@ pub fn remove(conn: &Connection, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+fn entry_label(conn: &Connection, verb: &str, id: i64) -> String {
+    match get(conn, id) {
+        Ok(e) => format!("{verb} {}", e.item_name),
+        Err(_) => format!("{verb} a dinner"),
+    }
+}
+
 #[tauri::command]
 pub fn plan_list(db: State<Db>, start: String, end: String) -> Result<Vec<PlanEntry>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -278,46 +337,71 @@ pub fn plan_list(db: State<Db>, start: String, end: String) -> Result<Vec<PlanEn
 #[tauri::command]
 pub fn plan_add(
     db: State<Db>,
+    undo: State<UndoStack>,
     item_id: i64,
     date: String,
     serves: Option<i64>,
+    position: Option<i64>,
 ) -> Result<PlanEntry, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    add(&conn, item_id, &date, serves)
+    tracked(
+        &db,
+        &undo,
+        |c| {
+            let name: Result<String, _> =
+                c.query_row("SELECT name FROM item WHERE id = ?1", params![item_id], |r| r.get(0));
+            format!("Added {}", name.unwrap_or_else(|_| "a dinner".into()))
+        },
+        |c| add_at(c, item_id, &date, serves, position),
+    )
 }
 
 #[tauri::command]
-pub fn plan_move(db: State<Db>, id: i64, date: String, position: i64) -> Result<PlanEntry, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    move_entry(&conn, id, &date, position)
+pub fn plan_move(
+    db: State<Db>,
+    undo: State<UndoStack>,
+    id: i64,
+    date: String,
+    position: i64,
+) -> Result<PlanEntry, String> {
+    tracked(&db, &undo, |c| entry_label(c, "Moved", id), |c| move_entry(c, id, &date, position))
 }
 
 #[tauri::command]
 pub fn plan_update(
     db: State<Db>,
+    undo: State<UndoStack>,
     id: i64,
     serves: Option<i64>,
     note: Option<String>,
+    scale: Option<f64>,
 ) -> Result<PlanEntry, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    update(&conn, id, serves, note.as_deref())
+    tracked(
+        &db,
+        &undo,
+        |c| entry_label(c, "Changed", id),
+        |c| update_with(c, id, serves, note.as_deref(), scale),
+    )
 }
 
 #[tauri::command]
 pub fn plan_copy_range(
     db: State<Db>,
+    undo: State<UndoStack>,
     src_start: String,
     src_end: String,
     dest_start: String,
 ) -> Result<CopyResult, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    copy_range(&conn, &src_start, &src_end, &dest_start)
+    tracked(
+        &db,
+        &undo,
+        |_| "Copied dinners".to_string(),
+        |c| copy_range(c, &src_start, &src_end, &dest_start),
+    )
 }
 
 #[tauri::command]
-pub fn plan_remove(db: State<Db>, id: i64) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    remove(&conn, id)
+pub fn plan_remove(db: State<Db>, undo: State<UndoStack>, id: i64) -> Result<(), String> {
+    tracked(&db, &undo, |c| entry_label(c, "Removed", id), |c| remove(c, id))
 }
 
 #[cfg(test)]
@@ -508,6 +592,53 @@ mod tests {
             copy_range(&conn, "2026-10-05", "2026-10-11", "2026-10-12").unwrap(),
             CopyResult { copied: 0, skipped_archived: 0 }
         );
+    }
+
+    #[test]
+    fn add_at_inserts_at_the_given_position() {
+        let conn = test_conn();
+        add(&conn, item_id(&conn, "Steak"), "2026-10-06", None).unwrap();
+        add(&conn, item_id(&conn, "Chips"), "2026-10-06", None).unwrap();
+        let e = add_at(&conn, item_id(&conn, "Garden salad"), "2026-10-06", None, Some(1)).unwrap();
+        assert_eq!(e.position, 1);
+        assert_eq!(names(&conn, "2026-10-06"), ["Steak", "Garden salad", "Chips"]);
+        assert_eq!(positions(&conn, "2026-10-06"), [0, 1, 2]);
+        add_at(&conn, item_id(&conn, "Steamed veg"), "2026-10-06", None, Some(99)).unwrap();
+        assert_eq!(names(&conn, "2026-10-06")[3], "Steamed veg", "clamped to the end");
+    }
+
+    #[test]
+    fn scale_applies_to_meals_and_sides_only() {
+        let conn = test_conn();
+        let bol = add(&conn, item_id(&conn, "Spag bol"), "2026-10-06", None).unwrap();
+        assert_eq!(bol.scale, 1.0, "every meal defaults to one night's size");
+        let u = update_with(&conn, bol.id, None, None, Some(1.5)).unwrap();
+        assert_eq!(u.scale, 1.5);
+        assert_eq!(update_with(&conn, bol.id, None, Some("x"), None).unwrap().scale, 1.5, "unchanged when omitted");
+
+        for bad in [0.0, -1.0, 10.5, f64::NAN] {
+            assert!(update_with(&conn, bol.id, None, None, Some(bad)).is_err(), "{bad}");
+        }
+        let steak = add(&conn, item_id(&conn, "Steak"), "2026-10-06", None).unwrap();
+        assert!(update_with(&conn, steak.id, None, None, Some(2.0)).is_err(), "meat is sized by serves");
+        let chips = add(&conn, item_id(&conn, "Chips"), "2026-10-06", None).unwrap();
+        assert_eq!(update_with(&conn, chips.id, None, None, Some(2.0)).unwrap().scale, 2.0);
+    }
+
+    #[test]
+    fn copy_range_keeps_size_and_leftovers() {
+        use crate::commands::dayinfo;
+        let conn = test_conn();
+        let bol = add(&conn, item_id(&conn, "Spag bol"), "2026-10-05", None).unwrap();
+        update_with(&conn, bol.id, None, None, Some(2.0)).unwrap();
+        dayinfo::set(&conn, "2026-10-06", Some("Alex working late"), Some(true)).unwrap();
+        dayinfo::set(&conn, "2026-10-08", Some("just a note"), None).unwrap();
+
+        copy_range(&conn, "2026-10-05", "2026-10-11", "2026-10-12").unwrap();
+        assert_eq!(list(&conn, "2026-10-12", "2026-10-12").unwrap()[0].scale, 2.0);
+        let days = dayinfo::list(&conn, "2026-10-12", "2026-10-18").unwrap();
+        assert_eq!(days.len(), 1, "only the leftovers marker is copied, not notes");
+        assert_eq!((days[0].date.as_str(), days[0].leftovers, days[0].note.as_deref()), ("2026-10-13", true, None));
     }
 
     #[test]
