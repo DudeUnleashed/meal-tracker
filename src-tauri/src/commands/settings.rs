@@ -35,6 +35,10 @@ fn validate(key: &str, value: &str) -> Result<(), String> {
             Ok(n) if n >= 1 => Ok(()),
             _ => Err("default_meat_serves must be a whole number of at least 1".into()),
         },
+        "planner_view" => match value {
+            "1w" | "2w" | "month" | "scroll" => Ok(()),
+            _ => Err("planner_view must be one of: 1w, 2w, month, scroll".into()),
+        },
         _ => Err(format!("Unknown setting: {key}")),
     }
 }
@@ -84,6 +88,9 @@ mod tests {
         assert!(set(&conn, "default_meat_serves", "0").is_err());
         assert!(set(&conn, "default_meat_serves", "abc").is_err());
         assert!(set(&conn, "nonsense", "1").is_err());
+        set(&conn, "planner_view", "month").unwrap();
+        assert_eq!(get(&conn, "planner_view").unwrap().as_deref(), Some("month"));
+        assert!(set(&conn, "planner_view", "3w").is_err());
         assert_eq!(get(&conn, "nonsense").unwrap(), None);
     }
 }

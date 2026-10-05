@@ -171,10 +171,14 @@ CREATE TABLE setting (
 └───────────────────────────────────────────────┴───────────────────────┘
 ```
 
-**Left: calendar (scrollable weeks)**
-- Vertical list of week rows, 7 day columns, dinners only.
-- **Scrolls in both directions**: back through past weeks, forward into future ones. Load weeks lazily as you scroll (e.g. ±8 weeks at a time).
-- Opens scrolled to the current week; **Today** button jumps back.
+**Left: calendar (switchable view)**
+- Dinners only, 7 day columns. A view switcher in the toolbar picks how much you see; the choice is remembered (`planner_view` setting):
+  - **1 week** — one big week, for focused planning of the week ahead.
+  - **2 weeks** (default) — a fortnight block, the usual planning window.
+  - **Month** — the whole calendar month at a glance, for varying meals over a month or two; days outside the month are muted.
+  - **Scroll** — continuous list of weeks, scrolling in both directions; weeks load lazily (±8 at a time).
+- 1 week / 2 weeks / Month show a fixed block with **‹ ›** to step by a block (1 week, 2 weeks, 1 month) and a title for the range shown. Switching view keeps you in the same place.
+- Opens on the current week; **Today** jumps back.
 - Past days are visually dimmed but still editable (so you can record what you actually ended up having).
 - A small 📝 icon on any entry that has a note.
 
@@ -194,7 +198,7 @@ CREATE TABLE setting (
 
 ### Summary (panel on the Planner page)
 
-Opened from the **Summary** button. Pick a start date (defaults to next shopping day / today) and a length (1 wk / 2 wk / custom). Works for past ranges too, to see what was bought.
+Opened from the **Summary** button. It **follows the planner view**: with 1 week or 2 weeks showing, the summary covers exactly that block (so you can plan a week or a fortnight and shop for it); in Month view it covers the month; in Scroll view it covers the current week. Quick **1 wk / 2 wk** toggles and ‹ › stepping change the block without leaving the summary, and a custom start date / length is available too. Works for past ranges too, to see what was bought.
 
 ```
 Shopping summary — 6 Oct to 19 Oct (14 dinners, 22 items)
@@ -285,10 +289,10 @@ Keep each phase small enough to finish and review in one session; commit after e
 1. **Scaffold** — Tauri 2 + React/TS + SQLite, migrations, seed data. Two-page navigation shell.
 2. **Ingredients + items CRUD** — Page 2 Items and Ingredients tabs, all three types, per-serve labelling for meats.
 3. **Summary logic** — Rust `summary()` with unit tests, before any UI depends on it.
-4. **Planner calendar** — scrollable weeks (past + future), lazy loading, Today button, show entries.
+4. **Planner calendar** — view switcher (1 week / 2 weeks / month / scroll), prev/next stepping, lazy-loaded scroll view, Today button, show entries.
 5. **Drag and drop** — library → day, move between days, remove, serves stepper for meats.
 6. **Notes + history** — entry notes in the chip popover, 📝 indicator, latest note and "last had" on library cards, history in item editor, edit-item drawer from the planner.
-7. **Summary UI** — range picker, grouping, contributing items, have-it ticks, copy as text.
+7. **Summary UI** — range follows the planner view (1 wk / 2 wk / month) with quick toggles, grouping, contributing items, have-it ticks, copy as text.
 8. **Templates (meals only)** — Templates tab + "start from template" toggle in the meal editor.
 9. **Polish** — search, colours, settings, copy last week, JSON backup/restore.
 10. **Android (stretch)** — Tauri Android build; on narrow screens make the library a slide-up drawer; long-press activation for dnd-kit touch.
