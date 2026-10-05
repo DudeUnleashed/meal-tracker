@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import IngredientForm from "../../components/IngredientForm";
 import IngredientPicker from "../../components/IngredientPicker";
+import QuantityInput from "../../components/QuantityInput";
+import { parseQuantity } from "../../lib/quantity";
 import {
   api,
   errorMessage,
@@ -233,10 +235,14 @@ function TemplateEditor({
         setError("Every line needs a label (e.g. “Protein” or “Arborio rice”)");
         return null;
       }
-      const quantity = l.quantity.trim() === "" ? null : Number(l.quantity);
-      if (quantity !== null && !(Number.isFinite(quantity) && quantity > 0)) {
-        setError(`“${l.label}” needs a quantity greater than zero`);
-        return null;
+      let quantity: number | null = null;
+      if (l.quantity.trim() !== "") {
+        const parsed = parseQuantity(l.quantity, l.kind === "fixed" ? unitOf(l.ingredient_id) : l.unit_hint);
+        if (!parsed.ok) {
+          setError(`“${l.label}”: ${parsed.error}`);
+          return null;
+        }
+        quantity = parsed.value;
       }
       if (l.kind === "fixed") {
         if (l.ingredient_id === null || quantity === null) {
@@ -364,12 +370,10 @@ function TemplateEditor({
                     </select>
                   )}
 
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
+                  <QuantityInput
                     value={line.quantity}
-                    onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
+                    unit={line.kind === "fixed" ? unitOf(line.ingredient_id) : line.unit_hint}
+                    onChange={(text) => updateLine(line.key, { quantity: text })}
                     placeholder={line.kind === "slot" ? "Default" : "Qty"}
                     className={`${field} w-24 text-right`}
                   />

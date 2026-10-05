@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../lib/api";
 import { daysOfWeek, toIso, weekRange, weekStartOf, type WeekStart } from "../../lib/dates";
-import { WeekRow, type Entries } from "./cells";
+import { WeekRow, type DayInfos, type Entries } from "./cells";
 
 interface Props {
   /** First day of the first week shown. */
@@ -21,17 +21,19 @@ export default function BlockView({ firstWeek, weekCount, month, weekStart, refr
   const last = weeks[weeks.length - 1];
 
   const [entries, setEntries] = useState<Entries>({});
+  const [dayInfos, setDayInfos] = useState<DayInfos>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    api.plan
-      .list(firstWeek, daysOfWeek(last)[6])
-      .then((list) => {
+    const end = daysOfWeek(last)[6];
+    Promise.all([api.plan.list(firstWeek, end), api.dayInfo.list(firstWeek, end)])
+      .then(([list, infos]) => {
         if (cancelled) return;
         const byDate: Entries = {};
         for (const e of list) (byDate[e.date] ??= []).push(e);
         setEntries(byDate);
+        setDayInfos(Object.fromEntries(infos.map((i) => [i.date, i])));
         setError(null);
       })
       .catch((e) => !cancelled && setError(errorMessage(e)));
@@ -50,6 +52,7 @@ export default function BlockView({ firstWeek, weekCount, month, weekStart, refr
           today={today}
           currentWeek={currentWeek}
           entries={entries}
+          dayInfos={dayInfos}
           fill
           month={month}
           // The month grid is dense enough without a heading per week.

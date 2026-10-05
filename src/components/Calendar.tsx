@@ -27,6 +27,9 @@ interface Props {
   onToggleSummary: () => void;
   /** Fill the block on screen from the block before it (1 and 2 week views). */
   onCopyPrevious: () => void;
+  /** What Undo would revert (e.g. "Removed Steak"); null when there is nothing to undo. */
+  undoLabel: string | null;
+  onUndo: () => void;
 }
 
 export default function Calendar({
@@ -39,6 +42,8 @@ export default function Calendar({
   summaryOpen,
   onToggleSummary,
   onCopyPrevious,
+  undoLabel,
+  onUndo,
 }: Props) {
   const [todayTick, setTodayTick] = useState(0);
   const block = blockRange(view, anchor, weekStart);
@@ -58,6 +63,14 @@ export default function Calendar({
           className="whitespace-nowrap rounded border border-slate-300 px-3 py-1 text-sm font-medium hover:bg-slate-50"
         >
           Today
+        </button>
+        <button
+          onClick={onUndo}
+          disabled={!undoLabel}
+          title={undoLabel ? `Undo: ${undoLabel}` : "Nothing to undo"}
+          className="whitespace-nowrap rounded border border-slate-300 px-3 py-1 text-sm font-medium hover:bg-slate-50 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+        >
+          ↶ Undo
         </button>
         {view !== "scroll" && (
           <div className="flex items-center gap-1">

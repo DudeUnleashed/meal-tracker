@@ -305,3 +305,22 @@ Keep each phase small enough to finish and review in one session; commit after e
 - Meat per-serve amounts are set on the item and only change by editing the item.
 - Past weeks are editable and reference the live item.
 - Default meat serves when dropping on the calendar: one household setting (adjust with the stepper per night).
+
+---
+
+## 11. Additions after the first build
+
+Requested while testing; all built and covered by tests.
+
+- **Undo ("whoops")** — an **↶ Undo** button in the planner toolbar reverts the last plan change one step at a time (add, move, remove, serves, size, notes, copy-week, day notes, leftovers). It remembers the last 30 steps in memory only (cleared when the app closes, or after a restore or wipe). Item, ingredient and template edits are not part of it.
+- **Day notes** — any day can carry a free-text note ("out for Sam's birthday", "Alex working late, so more leftovers"), separate from a dinner's own note. Hover a day → **＋ note**, or click an existing note. Takeaway / eating out is just a note — no special item.
+- **Leftovers tag** — a **🍲 Leftovers** marker with no data, dragged from the top of the right sidebar onto any day (and movable / removable) so a two-night meal reads clearly: lasagna Monday, leftovers Tuesday. Also settable from the day popover. Copy-last-week carries leftovers markers but not notes.
+- **Meal size** — every meal and side defaults to one night's amount. Click a chip → **Size** ½× / 1× / 1.5× / 2× / 3× scales the ingredients in the summary (a blue ×N badge shows on the chip). Meat still scales by serves.
+- **Haven't had in a while** — a box at the very top of the right sidebar suggests one meal, one meat and one side (never-had first, then longest ago; items already planned from today are skipped). **↻ Another** cycles through the next candidates, and each suggestion is draggable.
+- **Quantities with units** — quantity boxes accept `1.5kg`, `500ml`, `1l`, `250g` and convert to the ingredient's own unit (g or ml); a unit that doesn't fit (kg on a counted ingredient) is refused with a clear message.
+- **Clear data** (Settings) — **Remove sample data** deletes the demo meals/templates/ingredients (and dinners planned with them) while keeping anything you made, including sample ingredients your own meals use. **Erase everything** deletes all meals, ingredients, templates, plans and day notes (typing ERASE to confirm); categories and settings stay. Both save a backup file to the app's `backups` folder first.
+- Ingredient names are now unique ignoring case; changing an item's type after planning it fixes up its entries' serves.
+
+Data model additions: `plan_entry.scale REAL DEFAULT 1.0`; `day_info(date PK, note, leftovers)`; a `sample` flag on `item`, `ingredient` and `template`. Backups include them and older backup files still import.
+
+Deliberately not built: keyboard shortcuts (testers don't use them), and a "staples" flag (staples simply aren't entered in recipes).

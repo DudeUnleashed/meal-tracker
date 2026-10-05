@@ -11,6 +11,7 @@ import {
 } from "../lib/api";
 import { fromIso, toIso } from "../lib/dates";
 import { lastHadText, plannedText } from "../lib/relative";
+import { pickSuggestions } from "../lib/suggest";
 import type { DragData } from "./calendar/actions";
 
 type Sort = "name" | "least-recent";
@@ -27,6 +28,7 @@ export default function ItemLibrary({ refreshKey }: Props) {
   const [tab, setTab] = useState<ItemType>("meal");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<Sort>("name");
+  const [shuffle, setShuffle] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,8 +55,34 @@ export default function ItemLibrary({ refreshKey }: Props) {
     });
   }, [items, usage, q, tab, sort]);
 
+  const suggestions = useMemo(() => pickSuggestions(items, usage, shuffle), [items, usage, shuffle]);
+
   return (
     <aside className="flex w-72 shrink-0 flex-col border-l border-slate-200 bg-white">
+      <div className="space-y-2 border-b border-slate-200 bg-emerald-50/50 p-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+            Haven’t had in a while
+          </h3>
+          <button
+            onClick={() => setShuffle((n) => n + 1)}
+            title="Show a different suggestion"
+            className="rounded px-1.5 py-0.5 text-xs text-emerald-800 hover:bg-emerald-100"
+          >
+            ↻ Another
+          </button>
+        </div>
+        {(["meal", "meat", "side"] as const).map((t) => {
+          const pick = suggestions[t];
+          return pick ? (
+            <SuggestionCard key={t} item={pick} usage={usage[pick.id]} />
+          ) : null;
+        })}
+        {!suggestions.meal && !suggestions.meat && !suggestions.side && (
+          <p className="text-xs text-slate-400">Nothing to suggest yet — add some items in the Library.</p>
+        )}
+        <LeftoversTag />
+      </div>
       <div className="space-y-2 border-b border-slate-200 p-3">
         <input
           value={search}
@@ -101,6 +129,60 @@ export default function ItemLibrary({ refreshKey }: Props) {
         Drag an item onto a day to plan it. Click a planned item to add a note.
       </p>
     </aside>
+  );
+}
+
+/** A compact, draggable suggestion: drop it on a day like any other card. */
+function SuggestionCard({ item, usage }: { item: ItemSummary; usage: ItemUsage | undefined }) {
+  const data: DragData = { kind: "item", itemId: item.id, name: item.name, colour: item.colour };
+  const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `suggest:${item.id}`, data });
+  const today = new Date();
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`touch-none cursor-grab rounded border border-emerald-200 border-l-4 bg-white px-2 py-1.5 text-sm shadow-sm hover:bg-emerald-50 ${
+        isDragging ? "opacity-30" : ""
+      }`}
+      style={{ borderLeftColor: item.colour ?? "#94a3b8" }}
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="flex-1 truncate">{item.name}</span>
+        <span className="text-xs capitalize text-slate-400">{item.type}</span>
+      </div>
+      <div className="text-xs text-slate-400">
+        {usage?.last_had ? `last had ${lastHadText(usage.last_had, today)}` : "not had yet"}
+      </div>
+    </div>
+  );
+}
+
+/** The Leftovers tag: no ingredients, just a visible marker you drop on a day (e.g. the day after a big cook). */
+function LeftoversTag() {
+  const data: DragData = { kind: "leftovers" };
+  const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: "leftovers-tag", data });
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      title="Drag onto a day to mark it as a leftovers night"
+      className={`touch-none cursor-grab rounded border border-dashed border-teal-400 bg-teal-50 px-2 py-1.5 text-sm text-teal-800 hover:bg-teal-100 ${
+        isDragging ? "opacity-30" : ""
+      }`}
+    >
+      🍲 Leftovers <span className="text-xs text-teal-600">— drag onto a day</span>
+    </div>
+  );
+}
+
+export function LeftoversPreview() {
+  return (
+    <div className="w-40 cursor-grabbing rounded border border-dashed border-teal-400 bg-teal-50 px-2 py-1.5 text-sm text-teal-800 shadow-lg">
+      🍲 Leftovers
+    </div>
   );
 }
 

@@ -5,6 +5,10 @@ import { fromIso } from "../lib/dates";
 
 const WIDTH = 288;
 
+/** Quick sizes for a bigger (or smaller) night; the summary scales the ingredients by this. */
+const SIZES = [0.5, 1, 1.5, 2, 3];
+const SIZE_LABELS: Record<number, string> = { 0.5: "½×", 1: "1×", 1.5: "1.5×", 2: "2×", 3: "3×" };
+
 interface Props {
   entry: PlanEntry;
   /** The clicked chip's on-screen rectangle; the popover opens next to it. */
@@ -37,6 +41,15 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
   async function changeServes(serves: number) {
     try {
       setEntry(await api.plan.update(entry.id, { serves }));
+      onChanged();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
+  async function changeScale(scale: number) {
+    try {
+      setEntry(await api.plan.update(entry.id, { scale }));
       onChanged();
     } catch (e) {
       setError(errorMessage(e));
@@ -77,7 +90,7 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
   // Below the chip, clamped to the window; flipped above when there is no room.
   const left = Math.max(8, Math.min(anchor.left, window.innerWidth - WIDTH - 8));
   const below = anchor.bottom + 6;
-  const top = below + 260 > window.innerHeight ? Math.max(8, anchor.top - 266) : below;
+  const top = below + 330 > window.innerHeight ? Math.max(8, anchor.top - 336) : below;
 
   return (
     <div
@@ -116,6 +129,30 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
           >
             +
           </button>
+        </div>
+      )}
+
+      {entry.item_type !== "meat" && (
+        <div>
+          <div className="mb-1 text-xs text-slate-500">
+            Size <span className="text-slate-400">— 1 is the usual one night’s amount</span>
+          </div>
+          <div className="flex gap-1">
+            {SIZES.map((n) => (
+              <button
+                key={n}
+                onClick={() => changeScale(n)}
+                aria-pressed={Math.abs(entry.scale - n) < 1e-9}
+                className={`flex-1 rounded border px-1 py-1 text-xs ${
+                  Math.abs(entry.scale - n) < 1e-9
+                    ? "border-sky-400 bg-sky-50 font-semibold text-sky-800"
+                    : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {SIZE_LABELS[n]}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

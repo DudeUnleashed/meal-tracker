@@ -57,32 +57,25 @@ Settled in the spec (see spec §10) plus choices made while setting up:
 | 2026-10-05 | **Phase 9 done.** Backend: `plan_copy_range` (copies a range so it starts on a new date; serves kept, notes deliberately not, archived items skipped and counted, appended after anything already on the day), `categories_reorder`, and `commands/backup.rs` — `backup_export(path)` / `backup_import(path)` of the whole database as versioned JSON (original ids kept so references survive); import replaces everything inside one transaction, so a bad file (not JSON, wrong version, dangling references, invalid unit/setting, missing section) changes nothing. 11 new tests (63 Rust total pass). Frontend: **Settings** tab (default meat serves, first day of week, shopping-list category order with ↑↓, Export backup… / Restore from backup… with a destructive-action confirm and reload after restore); **Copy last week / last fortnight** button in the 1 and 2 week views (confirms when the block already has dinners, shows a notice). Search and per-item colours already existed from earlier phases. Verified in the real app (20 checks): copy, settings saved + applied (Sunday-first calendar), category order flowing into the summary, export via the real button, restore + bad-file rejection via the backend command. **Not exercised in-app:** the native *Restore* file-picker click path (a native dialog can't be driven here) — the backend it calls is covered by unit tests and the live check above. Test data removed. |
 | 2026-10-05 | **Android dropped; release builds added (phase 10 reframed).** `.github/workflows/build.yml` mirrors the budget tracker's: on push to `main` (or manual run) a Linux **test** job (`npx tsc --noEmit`, `npm test`, `cargo test`) gates a **build** matrix — Windows (`.msi` + NSIS `.exe`) and macOS (`--target universal-apple-darwin`, `.dmg` + `.app`) via `tauri-apps/tauri-action`, uploaded as `meal-planner-<platform>` artifacts. Spec updated (Windows + macOS only). Verified locally with `npm run tauri build`: produced `Meal Planner_0.1.0_x64_en-US.msi` (3.2 MB) and `Meal Planner_0.1.0_x64-setup.exe` (2.3 MB). The workflow itself has not run yet — there's no GitHub remote for this repo. Notes: app identifier is still `com.mealplanner.app` (changing it would move the data folder away from the existing database); installers use the default Tauri placeholder icon; macOS build is unsigned. |
 | 2026-10-05 | **Exploratory session before tester feedback.** Used the real app like a new user (planned two weeks, summary, small windows, awkward edits). Fixed: (1) changing an item's type after it was planned left entries inconsistent — a meal→meat item's chips had no serves to adjust, a meat→meal item kept stale serves; entries now get the default serves / lose them (test added); (2) ingredient names were case-sensitive, so "carrot" and "Carrot" could coexist and split a shopping total — now unique ignoring case (test added); (3) calendar toolbar squashed/wrapped badly on smaller windows — buttons no-wrap, the toolbar wraps cleanly, window minimum set to 1000×640, summary panel narrower below 1280 px. 65 Rust + 16 frontend tests pass. Ideas found are in the backlog below. |
+| 2026-10-05 | **Tester-feedback round built.** Backend: in-memory **undo** stack (30 steps; snapshots the plan + day info; plan commands are wrapped so every change is one undoable step — `plan_add` now takes an insert position so a drop is a single step) with `plan_undo` / `plan_undo_peek`; **day info** (`day_info` table: note + leftovers flag; list/set/move-leftovers; copy-week carries leftovers, not notes); **meal size** (`plan_entry.scale`, validated 0–10, meat uses serves; summary multiplies meals/sides by it and reports it per source); **data wipe** (`sample` flags set by migration `003`; `remove_sample` keeps user-made things and sample ingredients they still use; `erase_all` keeps categories and settings; both write an automatic backup into `<app data>/backups` first); backups extended (day info, scale, sample flags; older files still import). Frontend: Undo button, day note popover + ＋ note, draggable Leftovers tag and chip, Size buttons in the dinner popover and ×N badge, "Haven't had in a while" box (pure `lib/suggest.ts`), `QuantityInput` + `lib/quantity.ts` for `1.5kg`/`500ml`/`1l`, Settings → Clear data with inline confirmations. 86 Rust + 28 frontend tests pass; verified in the real app (44 checks: undo of add/remove/move, leftovers drag/move/remove, day notes, 2× size flowing into the summary, `1.5kg` → 1500 g and kg refused on a counted ingredient, sample removal keeping a user meal, ERASE gate, backups restorable). |
 
-## Ideas backlog (from exploratory testing — nothing here is built)
+## Ideas backlog
 
-Roughly in the order I'd try them. Treat tester feedback as the real priority signal.
+**Built after tester-prep feedback** (see the log): undo, day notes, leftovers tag, meal size multiplier, "haven't had in a while" suggestions, `1.5kg`-style quantities, remove-sample-data / erase-everything.
 
-**Likely first requests**
-- **Undo** for remove / accidental drag (a "Removed Steak — Undo" toast). Today a mis-drop or ✕ is permanent.
-- **Non-cooking nights.** A meal with no ingredients already works ("Takeaway", "Eating out", "Leftovers" — verified; the summary just skips them), but none are shipped. Seed a few, and consider a note-only/day-level marker ("working late", "dinner at Mum's").
-- **Scale a meal for the night** (×½, ×1.5, ×2 for guests or a small crowd). The spec deliberately fixes meals/sides (leftovers are built in), so only add this if testers hit it.
-- **Staples.** An "always have it" flag per ingredient (onion, butter, eggs…) that hides it from the summary by default, instead of re-ticking it every shop.
-- **Remove sample data.** The seeded meals/ingredients are demo content; testers may want a clean slate (Settings → "Clear sample data").
-- **Automatic safety backup** (e.g. a rolling copy on startup into Documents) so a tester who clicks Restore or breaks something can recover.
+**Decided against / later**
+- Keyboard shortcuts (Esc to close the drawer, Delete to remove a chip) — testers don't use them; revisit later.
+- A "staples" flag — staples aren't entered in recipes at all, so there's nothing to hide.
 
-**Smaller friction**
-- **Month view:** days with more than ~3 dinners get an inner scrollbar. Let rows grow, or show "+2 more".
-- **Quantity entry:** only g / ml / each. Typing `1.5 kg` or `2 L` and having it convert would avoid entering 1500.
-- **Duplicate item names** are still allowed ("chow mein" next to "Chow mein"); ingredients now are not. Consider a warning.
-- **Keyboard:** Esc to close the edit drawer, Delete to remove a selected chip.
-- **Find by ingredient** ("what can I make with chicken?") in the library search.
-- **Pick-for-me** for a night, using the least-recently-had meals.
-- **Repeat / copy a single day**, or "same as last Tuesday".
-- **Tags / favourites** (quick, kid-friendly) once the library grows.
-
-**Distribution**
-- Installers are manual downloads from the Actions artifacts; an in-app updater needs signing keys. macOS builds are unsigned (Gatekeeper warning).
-- Default Tauri icon is still used.
+**Still open**
+- Month view: days with more than ~3 dinners get an inner scrollbar. Let rows grow, or show "+2 more".
+- Duplicate *item* names are still allowed ("chow mein" next to "Chow mein"); ingredient names are not. Consider a warning.
+- Find by ingredient ("what can I make with chicken?") in the library search.
+- Repeat / copy a single day, or "same as last Tuesday".
+- Tags / favourites (quick, kid-friendly) once the library grows.
+- An automatic rolling backup on startup (wipes already save one first).
+- The Undo notice banner briefly pushes the calendar down; could float instead.
+- Installers are manual downloads from the Actions artifacts; an in-app updater needs signing keys. macOS builds are unsigned (Gatekeeper warning). Default Tauri icon is still used.
 
 ## Questions worth asking testers
 1. Did you ever want to plan something that isn't a cooked meal? What?

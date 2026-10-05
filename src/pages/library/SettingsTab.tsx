@@ -2,6 +2,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { format } from "date-fns";
 import { useEffect, useState } from "react";
 import { api, errorMessage, type IngredientCategory } from "../../lib/api";
+import DataSection from "./DataSection";
 
 const DAYS = [
   { value: "1", label: "Monday" },
@@ -211,6 +212,8 @@ export default function SettingsTab() {
             </p>
           )}
         </section>
+
+        <DataSection />
       </div>
     </div>
   );

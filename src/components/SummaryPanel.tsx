@@ -222,6 +222,7 @@ export default function SummaryPanel({
                               <span className="truncate">
                                 {s.item_name}
                                 {s.serves !== null && ` ×${s.serves}`}
+                                {s.scale !== null && ` ×${Number(s.scale.toFixed(2))}`}
                                 <span className="text-slate-400"> · {format(fromIso(s.date), "EEE d MMM")}</span>
                               </span>
                               <span className="tabular-nums">{formatQuantity(s.quantity, r.unit)}</span>
@@ -263,7 +264,12 @@ export default function SummaryPanel({
 function sourceHint(sources: Summary["rows"][number]["sources"]): string {
   const counts = new Map<string, number>();
   for (const s of sources) {
-    const label = s.serves !== null ? `${s.item_name} ×${s.serves}` : s.item_name;
+    const label =
+      s.serves !== null
+        ? `${s.item_name} ×${s.serves}`
+        : s.scale !== null
+          ? `${s.item_name} ×${Number(s.scale.toFixed(2))}`
+          : s.item_name;
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts].map(([label, n]) => (n > 1 ? `${label} (${n}×)` : label)).join(", ");

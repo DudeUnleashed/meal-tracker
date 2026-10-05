@@ -13,12 +13,13 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Calendar, { VIEWS, type CalendarView } from "../components/Calendar";
 import { PlannerActionsContext, type DragData, type PlannerActions } from "../components/calendar/actions";
-import { ChipBody } from "../components/calendar/cells";
+import { ChipBody, LeftoversBody } from "../components/calendar/cells";
 import ItemDrawer from "../components/ItemDrawer";
-import ItemLibrary, { CardPreview } from "../components/ItemLibrary";
+import DayNotePopover from "../components/DayNotePopover";
+import ItemLibrary, { CardPreview, LeftoversPreview } from "../components/ItemLibrary";
 import PlanEntryPopover from "../components/PlanEntryPopover";
 import SummaryPanel, { type SummaryMode } from "../components/SummaryPanel";
-import { api, errorMessage, type PlanEntry } from "../lib/api";
+import { api, errorMessage, type DayInfo, type PlanEntry } from "../lib/api";
 import { addDays } from "date-fns";
 import { fromIso, shiftWeeks, toIso, type WeekStart } from "../lib/dates";
 import { blockRange, shiftRange, stepAnchor } from "../lib/ranges";
@@ -47,6 +48,9 @@ export default function PlannerPage() {
   const [dragging, setDragging] = useState<DragData | null>(null);
   const [popover, setPopover] = useState<{ entry: PlanEntry; anchor: DOMRect } | null>(null);
   const [drawerItemId, setDrawerItemId] = useState<number | null>(null);
+  const [dayPopover, setDayPopover] = useState<{ date: string; anchor: DOMRect; info?: DayInfo } | null>(null);
+  // What the Undo button would revert, e.g. "Removed Steak" (null = nothing to undo).
+  const [undoLabel, setUndoLabel] = useState<string | null>(null);
   // Any date inside the block on screen; the summary follows it.
   const [anchor, setAnchor] = useState(() => toIso(new Date()));
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -70,6 +74,14 @@ export default function PlannerPage() {
       .catch((e) => setError(errorMessage(e)));
   }, []);
 
+  // Re-check what Undo would do whenever the plan may have changed.
+  useEffect(() => {
+    api.plan
+      .undoPeek()
+      .then(setUndoLabel)
+      .catch(() => setUndoLabel(null));
+  }, [refreshKey]);
+
   function changeView(next: CalendarView) {
     setView(next);
     api.settings.set("planner_view", next).catch((e) => setError(errorMessage(e)));
@@ -92,11 +104,38 @@ export default function PlannerPage() {
         mutate(() => api.plan.update(entry.id, { serves })),
       removeEntry: (entry: PlanEntry) => mutate(() => api.plan.remove(entry.id)),
       openEntry: (entry: PlanEntry, anchor: DOMRect) => setPopover({ entry, anchor }),
+      openDay: async (date: string, anchor: DOMRect) => {
+        try {
+          const [info] = await api.dayInfo.list(date, date);
+          setPopover(null);
+          setDayPopover({ date, anchor, info });
+        } catch (e) {
+          setError(errorMessage(e));
+        }
+      },
+      removeLeftovers: (date: string) => mutate(() => api.dayInfo.set(date, { leftovers: false })),
     }),
     [mutate],
   );
 
   const reload = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  /** The "whoops" button: reverts the most recent plan change. */
+  async function undo() {
+    try {
+      setError(null);
+      setPopover(null);
+      setDayPopover(null);
+      const undone = await api.plan.undo();
+      reload();
+      if (undone) {
+        setNotice(`Undone: ${undone}`);
+        setTimeout(() => setNotice(null), 3000);
+      }
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
 
   /** Fills the block on screen with the dinners from the block just before it. */
   async function copyPrevious() {
@@ -156,6 +195,7 @@ export default function PlannerPage() {
 
   function onDragStart(e: DragStartEvent) {
     setPopover(null);
+    setDayPopover(null);
     setDragging((e.active.data.current as DragData) ?? null);
   }
 
@@ -163,25 +203,25 @@ export default function PlannerPage() {
     setDragging(null);
     const from = active.data.current as DragData | undefined;
     const to = over?.data.current as DragData | undefined;
-    if (!from || !to || to.kind === "item") return;
+    if (!from || (to?.kind !== "day" && to?.kind !== "entry")) return;
+    const date = to.date;
 
-    // Dropping on a day appends; dropping on a chip takes that chip's place.
-    let date: string;
-    let position: number;
-    if (to.kind === "day") {
-      date = to.date;
-      position = to.count;
-    } else {
-      if (from.kind === "entry" && from.entryId === to.entryId) return; // dropped on itself
-      date = to.date;
-      position = to.index;
+    // The Leftovers tag: from the library onto a day, or moved from one day to another.
+    if (from.kind === "leftovers") {
+      mutate(() => api.dayInfo.set(date, { leftovers: true }));
+      return;
+    }
+    if (from.kind === "leftovers-chip") {
+      if (from.date !== date) mutate(() => api.dayInfo.moveLeftovers(from.date, date));
+      return;
     }
 
+    // Dropping on a day appends; dropping on a chip takes that chip's place.
+    if (to.kind === "entry" && from.kind === "entry" && from.entryId === to.entryId) return; // on itself
+    const position = to.kind === "day" ? to.count : to.index;
+
     if (from.kind === "item") {
-      mutate(async () => {
-        const entry = await api.plan.add(from.itemId, date);
-        if (to.kind === "entry") await api.plan.move(entry.id, date, position);
-      });
+      mutate(() => api.plan.add(from.itemId, date, undefined, to.kind === "entry" ? position : undefined));
     } else if (from.kind === "entry") {
       mutate(() => api.plan.move(from.entryId, date, position));
     }
@@ -224,6 +264,8 @@ export default function PlannerPage() {
                   summaryOpen={summaryOpen}
                   onToggleSummary={() => setSummaryOpen((o) => !o)}
                   onCopyPrevious={copyPrevious}
+                  undoLabel={undoLabel}
+                  onUndo={undo}
                 />
               )}
             </div>
@@ -256,12 +298,30 @@ export default function PlannerPage() {
           onEditItem={setDrawerItemId}
         />
       )}
+      {dayPopover && (
+        <DayNotePopover
+          key={dayPopover.date}
+          date={dayPopover.date}
+          anchor={dayPopover.anchor}
+          info={dayPopover.info}
+          onClose={() => setDayPopover(null)}
+          onChanged={reload}
+        />
+      )}
       {drawerItemId !== null && (
         <ItemDrawer itemId={drawerItemId} onClose={() => setDrawerItemId(null)} onChanged={reload} />
       )}
 
       <DragOverlay dropAnimation={null}>
         {dragging?.kind === "item" && <CardPreview name={dragging.name} colour={dragging.colour} />}
+        {(dragging?.kind === "leftovers" || dragging?.kind === "leftovers-chip") &&
+          (dragging.kind === "leftovers" ? (
+            <LeftoversPreview />
+          ) : (
+            <div className="w-40">
+              <LeftoversBody />
+            </div>
+          ))}
         {dragging?.kind === "entry" && (
           <div className="w-44">
             <ChipBody entry={dragging.entry} />

@@ -9,7 +9,7 @@ import {
   weekStartOf,
   type WeekStart,
 } from "../../lib/dates";
-import { WeekRow, type Entries } from "./cells";
+import { WeekRow, type DayInfos, type Entries } from "./cells";
 
 /** Weeks loaded on first render either side of the current week, and per scroll extension. */
 const INITIAL_WEEKS = 8;
@@ -37,6 +37,7 @@ export default function ScrollView({ weekStart, refreshKey, todayTick }: Props) 
     ...weekRange(currentWeek, INITIAL_WEEKS + 1),
   ]);
   const [entries, setEntries] = useState<Entries>({});
+  const [dayInfos, setDayInfos] = useState<DayInfos>({});
   const [error, setError] = useState<string | null>(null);
   const [initialLoaded, setInitialLoaded] = useState(false);
 
@@ -50,14 +51,22 @@ export default function ScrollView({ weekStart, refreshKey, todayTick }: Props) 
   const loadRange = useCallback(async (firstWeek: string, lastWeek: string) => {
     const days = daysOfWeek(lastWeek);
     try {
-      const list = await api.plan.list(firstWeek, days[6]);
+      const [list, infos] = await Promise.all([
+        api.plan.list(firstWeek, days[6]),
+        api.dayInfo.list(firstWeek, days[6]),
+      ]);
+      const loadedDays = weekRange(firstWeek, weeksBetween(firstWeek, lastWeek) + 1).flatMap(daysOfWeek);
       setEntries((prev) => {
         const next = { ...prev };
         // Clear every loaded day first so removed entries disappear.
-        for (const w of weekRange(firstWeek, weeksBetween(firstWeek, lastWeek) + 1)) {
-          for (const d of daysOfWeek(w)) delete next[d];
-        }
+        for (const d of loadedDays) delete next[d];
         for (const e of list) (next[e.date] ??= []).push(e);
+        return next;
+      });
+      setDayInfos((prev) => {
+        const next = { ...prev };
+        for (const d of loadedDays) delete next[d];
+        for (const i of infos) next[i.date] = i;
         return next;
       });
     } catch (e) {
@@ -148,7 +157,14 @@ export default function ScrollView({ weekStart, refreshKey, todayTick }: Props) 
       {error && <p className="px-4 py-1 text-sm text-red-600">{error}</p>}
       <div ref={topSentinel} className="h-px" />
       {weeks.map((w) => (
-        <WeekRow key={w} weekStart={w} today={today} currentWeek={currentWeek} entries={entries} />
+        <WeekRow
+          key={w}
+          weekStart={w}
+          today={today}
+          currentWeek={currentWeek}
+          entries={entries}
+          dayInfos={dayInfos}
+        />
       ))}
       <div ref={bottomSentinel} className="h-px" />
     </div>

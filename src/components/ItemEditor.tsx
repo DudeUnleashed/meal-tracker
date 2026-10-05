@@ -14,7 +14,9 @@ import {
 } from "../lib/api";
 import IngredientForm from "./IngredientForm";
 import IngredientPicker from "./IngredientPicker";
+import QuantityInput from "./QuantityInput";
 import TemplateFiller from "./TemplateFiller";
+import { parseQuantity } from "../lib/quantity";
 
 interface Line {
   key: number;
@@ -190,16 +192,17 @@ export default function ItemEditor({
     const lines: { ingredient_id: number; quantity: number }[] = [];
     for (const l of draft.lines) {
       if (l.ingredient_id === null && l.quantity.trim() === "") continue; // untouched blank row
-      const quantity = Number(l.quantity);
       if (l.ingredient_id === null) {
         setError("Pick an ingredient for every line (or remove the empty one)");
         return null;
       }
-      if (!Number.isFinite(quantity) || quantity <= 0) {
-        setError("Every ingredient needs a quantity greater than zero");
+      const parsed = parseQuantity(l.quantity, unitOf(l.ingredient_id));
+      if (!parsed.ok) {
+        const name = ingredients.find((i) => i.id === l.ingredient_id)?.name ?? "an ingredient";
+        setError(`${name}: ${parsed.error}`);
         return null;
       }
-      lines.push({ ingredient_id: l.ingredient_id, quantity });
+      lines.push({ ingredient_id: l.ingredient_id, quantity: parsed.value });
     }
     return {
       name: draft.name,
@@ -368,14 +371,10 @@ export default function ItemEditor({
                       onCreate={(name) => setCreating({ key: line.key, name })}
                     />
                   </div>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
+                  <QuantityInput
                     value={line.quantity}
-                    onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
-                    placeholder="Qty"
-                    className="w-24 rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                    unit={unitOf(line.ingredient_id)}
+                    onChange={(text) => updateLine(line.key, { quantity: text })}
                   />
                   <span className="w-20 text-xs text-slate-500">
                     {unitOf(line.ingredient_id)}
