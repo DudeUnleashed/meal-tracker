@@ -25,6 +25,7 @@ pub fn run() {
             commands::items::items_update,
             commands::items::items_duplicate,
             commands::items::items_archive,
+            commands::summary::summary_get,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

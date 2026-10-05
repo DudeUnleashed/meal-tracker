@@ -68,6 +68,36 @@ export interface ItemInput {
   lines: { ingredient_id: number; quantity: number }[];
 }
 
+export interface SummarySource {
+  item_id: number;
+  item_name: string;
+  date: string;
+  /** Serves on the entry (meat only). */
+  serves: number | null;
+  /** What this entry adds, already scaled by serves. */
+  quantity: number;
+}
+
+export interface SummaryRow {
+  ingredient_id: number;
+  ingredient_name: string;
+  category_id: number;
+  category_name: string;
+  unit: Unit;
+  /** `each` totals are already rounded up to whole items. */
+  quantity: number;
+  sources: SummarySource[];
+}
+
+export interface Summary {
+  start: string;
+  end: string;
+  entry_count: number;
+  dinner_days: number;
+  /** Sorted by category order, then ingredient name. */
+  rows: SummaryRow[];
+}
+
 export const api = {
   categories: {
     list: () => invoke<IngredientCategory[]>("categories_list"),
@@ -95,6 +125,10 @@ export const api = {
     duplicate: (id: number) => invoke<Item>("items_duplicate", { id }),
     archive: (id: number, archived: boolean) =>
       invoke<Item>("items_archive", { id, archived }),
+  },
+  summary: {
+    /** Dates are ISO `YYYY-MM-DD`, inclusive. */
+    get: (start: string, end: string) => invoke<Summary>("summary_get", { start, end }),
   },
 };
 
