@@ -7,10 +7,12 @@ interface Props {
   onChange: (ingredient: Ingredient) => void;
   /** Called with the current search text when the user wants to create a new ingredient. */
   onCreate: (name: string) => void;
+  /** Only offer ingredients from this category (template slots, e.g. Protein → Meat). */
+  categoryId?: number | null;
 }
 
 /** Searchable ingredient dropdown with a "create new" escape hatch. */
-export default function IngredientPicker({ ingredients, value, onChange, onCreate }: Props) {
+export default function IngredientPicker({ ingredients, value, onChange, onCreate, categoryId }: Props) {
   const selected = ingredients.find((i) => i.id === value) ?? null;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -27,7 +29,12 @@ export default function IngredientPicker({ ingredients, value, onChange, onCreat
 
   const q = query.trim().toLowerCase();
   const matches = ingredients
-    .filter((i) => !i.archived && i.name.toLowerCase().includes(q))
+    .filter(
+      (i) =>
+        !i.archived &&
+        (categoryId == null || i.category_id === categoryId) &&
+        i.name.toLowerCase().includes(q),
+    )
     .slice(0, 50);
   const exact = ingredients.some((i) => i.name.toLowerCase() === q);
 

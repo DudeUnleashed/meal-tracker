@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage, type Ingredient, type IngredientCategory } from "../lib/api";
 import IngredientsTab from "./library/IngredientsTab";
 import ItemsTab from "./library/ItemsTab";
+import TemplatesTab from "./library/TemplatesTab";
 
 const TABS = ["Items", "Templates", "Ingredients", "Settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -70,8 +71,15 @@ export default function LibraryPage() {
             onChanged={upsertIngredient}
           />
         )}
-        {(tab === "Templates" || tab === "Settings") && (
-          <p className="p-6 text-sm text-slate-500">{tab} tab (coming in a later phase).</p>
+        {tab === "Templates" && (
+          <TemplatesTab
+            ingredients={ingredients}
+            categories={categories}
+            onIngredientCreated={upsertIngredient}
+          />
+        )}
+        {tab === "Settings" && (
+          <p className="p-6 text-sm text-slate-500">Settings tab (coming in a later phase).</p>
         )}
       </div>
     </div>

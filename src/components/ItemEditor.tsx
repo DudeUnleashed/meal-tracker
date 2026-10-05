@@ -1,5 +1,5 @@
 import { format } from "date-fns";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fromIso, toIso } from "../lib/dates";
 import {
   api,
@@ -9,10 +9,12 @@ import {
   type Ingredient,
   type IngredientCategory,
   type Item,
+  type ItemDraft,
   type ItemType,
 } from "../lib/api";
 import IngredientForm from "./IngredientForm";
 import IngredientPicker from "./IngredientPicker";
+import TemplateFiller from "./TemplateFiller";
 
 interface Line {
   key: number;
@@ -102,6 +104,11 @@ export default function ItemEditor({
   const [busy, setBusy] = useState(false);
   // Which line is creating a new ingredient, and the name to start with.
   const [creating, setCreating] = useState<{ key: number; name: string } | null>(null);
+  // "Start from template" (new meals only): the picker is open / which template filled the lines.
+  const [useTemplate, setUseTemplate] = useState(false);
+  const [fromTemplate, setFromTemplate] = useState<string | null>(null);
+  // The name we last suggested, so we only overwrite a name the user hasn't changed.
+  const suggestedName = useRef("");
 
   // Load the existing item (the parent re-mounts this component per item via `key`).
   useEffect(() => {
@@ -153,6 +160,27 @@ export default function ItemEditor({
   };
   const unitOf = (id: number | null) => ingredients.find((i) => i.id === id)?.unit ?? "";
 
+  /** Copies a template draft into the editor as ordinary, editable lines. */
+  function applyTemplate(result: ItemDraft, templateName: string) {
+    if (!draft) return;
+    const hasLines = draft.lines.some((l) => l.ingredient_id !== null || l.quantity.trim() !== "");
+    if (hasLines && !window.confirm("Replace the current ingredients with the template's?")) return;
+    const keepName = draft.name.trim() !== "" && draft.name !== suggestedName.current;
+    suggestedName.current = result.name;
+    setDraft({
+      ...draft,
+      name: keepName ? draft.name : result.name,
+      template_id: result.template_id,
+      lines: result.lines.map((l) => ({
+        key: nextKey++,
+        ingredient_id: l.ingredient_id,
+        quantity: l.quantity === null ? "" : String(l.quantity),
+      })),
+    });
+    setFromTemplate(templateName);
+    setUseTemplate(false);
+  }
+
   function buildInput() {
     if (!draft) return null;
     if (!draft.name.trim()) {
@@ -178,7 +206,8 @@ export default function ItemEditor({
       type: draft.type,
       colour: draft.colour,
       notes: draft.notes.trim() === "" ? null : draft.notes,
-      template_id: draft.template_id,
+      // Templates are for meals only; drop the link if the type was changed afterwards.
+      template_id: draft.type === "meal" ? draft.template_id : null,
       lines,
     };
   }
@@ -276,6 +305,35 @@ export default function ItemEditor({
             </div>
           </label>
         </div>
+
+        {itemId === null && draft.type === "meal" && (
+          <div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={useTemplate}
+                onChange={(e) => setUseTemplate(e.target.checked)}
+              />
+              Start from template
+              {fromTemplate && !useTemplate && (
+                <span className="text-xs text-slate-500">
+                  — started from {fromTemplate}; edit the lines freely
+                </span>
+              )}
+            </label>
+            {useTemplate && (
+              <div className="mt-2">
+                <TemplateFiller
+                  ingredients={ingredients}
+                  categories={categories}
+                  onIngredientCreated={onIngredientCreated}
+                  onApply={applyTemplate}
+                  onCancel={() => setUseTemplate(false)}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <label className="block text-xs text-slate-500">
           Notes

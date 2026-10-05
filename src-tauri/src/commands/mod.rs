@@ -4,4 +4,5 @@ pub mod items;
 pub mod plan;
 pub mod settings;
 pub mod summary;
+pub mod templates;
 pub mod usage;

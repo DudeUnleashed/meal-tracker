@@ -133,6 +133,60 @@ export interface HistoryEntry {
 
 export type Settings = Record<string, string>;
 
+export interface TemplateSummary {
+  id: number;
+  name: string;
+  fixed_count: number;
+  slot_count: number;
+}
+
+/** Fixed line: has an ingredient. Slot: `ingredient_id` is null and is filled in per meal. */
+export interface TemplateLine {
+  id: number;
+  label: string;
+  ingredient_id: number | null;
+  ingredient_name: string | null;
+  ingredient_unit: Unit | null;
+  /** Filters the ingredient picker for slots (e.g. Meat). */
+  category_id: number | null;
+  category_name: string | null;
+  quantity: number | null;
+  unit_hint: Unit | null;
+}
+
+export interface Template {
+  id: number;
+  name: string;
+  lines: TemplateLine[];
+}
+
+export interface TemplateInput {
+  name: string;
+  lines: {
+    label: string;
+    ingredient_id: number | null;
+    category_id: number | null;
+    quantity: number | null;
+    unit_hint: Unit | null;
+  }[];
+}
+
+export interface DraftLine {
+  ingredient_id: number;
+  ingredient_name: string;
+  unit: Unit;
+  /** Null when the template default doesn't apply (e.g. grams default but the pick is counted "each"). */
+  quantity: number | null;
+  label: string;
+}
+
+/** Unsaved meal built from a template; every line is plain and editable. */
+export interface ItemDraft {
+  name: string;
+  template_id: number;
+  lines: DraftLine[];
+}
+
 export const api = {
   categories: {
     list: () => invoke<IngredientCategory[]>("categories_list"),
@@ -164,6 +218,17 @@ export const api = {
     usage: (today: string) => invoke<ItemUsage[]>("items_usage", { today }),
     /** Every plan entry for the item, newest first. */
     history: (id: number) => invoke<HistoryEntry[]>("items_history", { id }),
+  },
+  templates: {
+    list: () => invoke<TemplateSummary[]>("templates_list"),
+    get: (id: number) => invoke<Template>("templates_get", { id }),
+    create: (input: TemplateInput) => invoke<Template>("templates_create", { input }),
+    update: (id: number, input: TemplateInput) =>
+      invoke<Template>("templates_update", { id, input }),
+    delete: (id: number) => invoke<void>("templates_delete", { id }),
+    /** Unfilled slots are skipped. */
+    instantiate: (templateId: number, slotFills: { line_id: number; ingredient_id: number }[]) =>
+      invoke<ItemDraft>("templates_instantiate", { templateId, slotFills }),
   },
   plan: {
     list: (start: string, end: string) => invoke<PlanEntry[]>("plan_list", { start, end }),

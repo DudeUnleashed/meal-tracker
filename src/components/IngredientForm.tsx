@@ -12,6 +12,8 @@ interface Props {
   categories: IngredientCategory[];
   /** Pre-fills the name (e.g. from a picker search). */
   initialName?: string;
+  /** Pre-selects a category (e.g. the one a template slot is filtered to). */
+  initialCategoryId?: number | null;
   /** Existing ingredient to edit; omit to create. */
   existing?: Ingredient;
   onSaved: (ingredient: Ingredient) => void;
@@ -22,13 +24,14 @@ interface Props {
 export default function IngredientForm({
   categories,
   initialName = "",
+  initialCategoryId,
   existing,
   onSaved,
   onCancel,
 }: Props) {
   const [name, setName] = useState(existing?.name ?? initialName);
   const [categoryId, setCategoryId] = useState(
-    existing?.category_id ?? categories[0]?.id ?? 0,
+    existing?.category_id ?? initialCategoryId ?? categories[0]?.id ?? 0,
   );
   const [unit, setUnit] = useState<Unit>(existing?.unit ?? "g");
   const [error, setError] = useState<string | null>(null);
