@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage, type Ingredient, type IngredientCategory } from "../lib/api";
 import IngredientsTab from "./library/IngredientsTab";
 import ItemsTab from "./library/ItemsTab";
+import SettingsTab from "./library/SettingsTab";
 import TemplatesTab from "./library/TemplatesTab";
 
 const TABS = ["Items", "Templates", "Ingredients", "Settings"] as const;
@@ -78,9 +79,7 @@ export default function LibraryPage() {
             onIngredientCreated={upsertIngredient}
           />
         )}
-        {tab === "Settings" && (
-          <p className="p-6 text-sm text-slate-500">Settings tab (coming in a later phase).</p>
-        )}
+        {tab === "Settings" && <SettingsTab />}
       </div>
     </div>
   );

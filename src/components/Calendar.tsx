@@ -25,6 +25,8 @@ interface Props {
   refreshKey?: number;
   summaryOpen: boolean;
   onToggleSummary: () => void;
+  /** Fill the block on screen from the block before it (1 and 2 week views). */
+  onCopyPrevious: () => void;
 }
 
 export default function Calendar({
@@ -36,6 +38,7 @@ export default function Calendar({
   refreshKey = 0,
   summaryOpen,
   onToggleSummary,
+  onCopyPrevious,
 }: Props) {
   const [todayTick, setTodayTick] = useState(0);
   const block = blockRange(view, anchor, weekStart);
@@ -79,6 +82,15 @@ export default function Calendar({
         </span>
 
         <div className="ml-auto flex items-center gap-2">
+          {(view === "1w" || view === "2w") && (
+            <button
+              onClick={onCopyPrevious}
+              title={`Copy the dinners from the previous ${view === "1w" ? "week" : "2 weeks"} into this block`}
+              className="rounded border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Copy {view === "1w" ? "last week" : "last fortnight"}
+            </button>
+          )}
           <div className="flex gap-1 rounded bg-slate-100 p-0.5">
             {VIEWS.map((v) => (
               <button

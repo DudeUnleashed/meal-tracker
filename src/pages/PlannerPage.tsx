@@ -19,7 +19,8 @@ import ItemLibrary, { CardPreview } from "../components/ItemLibrary";
 import PlanEntryPopover from "../components/PlanEntryPopover";
 import SummaryPanel, { type SummaryMode } from "../components/SummaryPanel";
 import { api, errorMessage, type PlanEntry } from "../lib/api";
-import { toIso, type WeekStart } from "../lib/dates";
+import { addDays } from "date-fns";
+import { fromIso, shiftWeeks, toIso, type WeekStart } from "../lib/dates";
 import { blockRange, shiftRange, stepAnchor } from "../lib/ranges";
 
 const DEFAULT_VIEW: CalendarView = "2w";
@@ -41,6 +42,7 @@ export default function PlannerPage() {
   const [weekStart, setWeekStart] = useState<WeekStart | null>(null);
   const [view, setView] = useState<CalendarView>(DEFAULT_VIEW);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [dragging, setDragging] = useState<DragData | null>(null);
   const [popover, setPopover] = useState<{ entry: PlanEntry; anchor: DOMRect } | null>(null);
@@ -95,6 +97,38 @@ export default function PlannerPage() {
   );
 
   const reload = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  /** Fills the block on screen with the dinners from the block just before it. */
+  async function copyPrevious() {
+    if (weekStart === null || (view !== "1w" && view !== "2w")) return;
+    const b = blockRange(view, anchor, weekStart);
+    const srcStart = shiftWeeks(b.firstWeek, -b.weekCount);
+    const srcEnd = toIso(addDays(fromIso(b.firstWeek), -1));
+    const noun = view === "1w" ? "week" : "fortnight";
+    try {
+      setError(null);
+      const existing = await api.plan.list(b.start, b.end);
+      if (
+        existing.length > 0 &&
+        !window.confirm(
+          `This ${noun} already has ${existing.length} planned ${existing.length === 1 ? "item" : "items"}. Add last ${noun}'s dinners on top of them?`,
+        )
+      )
+        return;
+      const r = await api.plan.copyRange(srcStart, srcEnd, b.firstWeek);
+      reload();
+      setNotice(
+        r.copied === 0
+          ? `Nothing to copy — last ${noun} has no dinners planned.`
+          : `Copied ${r.copied} ${r.copied === 1 ? "dinner" : "dinners"} from last ${noun}` +
+              (r.skipped_archived ? ` (${r.skipped_archived} skipped: archived items)` : "") +
+              ".",
+      );
+      setTimeout(() => setNotice(null), 4000);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
 
   // The summary covers the block on screen (the scroll view counts as one week) unless customised.
   const summaryView = view === "scroll" ? "1w" : view;
@@ -167,6 +201,11 @@ export default function PlannerPage() {
             {error && (
               <p className="border-b border-red-200 bg-red-50 px-4 py-1 text-sm text-red-700">{error}</p>
             )}
+            {notice && (
+              <p className="border-b border-emerald-200 bg-emerald-50 px-4 py-1 text-sm text-emerald-800">
+                {notice}
+              </p>
+            )}
             <div className="min-h-0 flex-1">
               {weekStart === null ? (
                 <p className="p-4 text-sm text-slate-500">{error ?? "Loading…"}</p>
@@ -184,6 +223,7 @@ export default function PlannerPage() {
                   refreshKey={refreshKey}
                   summaryOpen={summaryOpen}
                   onToggleSummary={() => setSummaryOpen((o) => !o)}
+                  onCopyPrevious={copyPrevious}
                 />
               )}
             </div>

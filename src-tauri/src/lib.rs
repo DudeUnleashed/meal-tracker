@@ -15,6 +15,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::categories::categories_list,
+            commands::categories::categories_reorder,
+            commands::backup::backup_export,
+            commands::backup::backup_import,
             commands::ingredients::ingredients_list,
             commands::ingredients::ingredients_create,
             commands::ingredients::ingredients_update,
@@ -38,6 +41,7 @@ pub fn run() {
             commands::plan::plan_add,
             commands::plan::plan_move,
             commands::plan::plan_update,
+            commands::plan::plan_copy_range,
             commands::plan::plan_remove,
             commands::settings::settings_get,
             commands::settings::settings_set,

@@ -133,6 +133,19 @@ export interface HistoryEntry {
 
 export type Settings = Record<string, string>;
 
+export interface CopyResult {
+  copied: number;
+  /** Left out because their item has been archived since. */
+  skipped_archived: number;
+}
+
+export interface ImportSummary {
+  items: number;
+  ingredients: number;
+  templates: number;
+  plan_entries: number;
+}
+
 export interface TemplateSummary {
   id: number;
   name: string;
@@ -190,6 +203,8 @@ export interface ItemDraft {
 export const api = {
   categories: {
     list: () => invoke<IngredientCategory[]>("categories_list"),
+    /** `ids` = every category id, in the new order (also the order of the shopping summary). */
+    reorder: (ids: number[]) => invoke<IngredientCategory[]>("categories_reorder", { ids }),
   },
   ingredients: {
     list: (includeArchived = false) =>
@@ -240,11 +255,20 @@ export const api = {
     /** Omitted fields are unchanged; a blank note clears it. */
     update: (id: number, patch: { serves?: number; note?: string }) =>
       invoke<PlanEntry>("plan_update", { id, serves: patch.serves ?? null, note: patch.note ?? null }),
+    /** Copies the range so it starts on `destStart`; serves are kept, notes are not. */
+    copyRange: (srcStart: string, srcEnd: string, destStart: string) =>
+      invoke<CopyResult>("plan_copy_range", { srcStart, srcEnd, destStart }),
     remove: (id: number) => invoke<void>("plan_remove", { id }),
   },
   settings: {
     get: () => invoke<Settings>("settings_get"),
     set: (key: string, value: string) => invoke<void>("settings_set", { key, value }),
+  },
+  backup: {
+    /** Writes the whole database as JSON to `path`. */
+    export: (path: string) => invoke<void>("backup_export", { path }),
+    /** Replaces ALL data with the backup file's. All-or-nothing. */
+    import: (path: string) => invoke<ImportSummary>("backup_import", { path }),
   },
   summary: {
     /** Dates are ISO `YYYY-MM-DD`, inclusive. */

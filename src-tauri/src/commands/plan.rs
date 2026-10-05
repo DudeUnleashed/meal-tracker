@@ -205,6 +205,60 @@ pub fn update(
     get(conn, id)
 }
 
+#[derive(Serialize, Debug, PartialEq)]
+pub struct CopyResult {
+    pub copied: i64,
+    /// Entries left out because their item has been archived since.
+    pub skipped_archived: i64,
+}
+
+/// Copies every entry dated `src_start..=src_end` so the range starts on `dest_start` instead
+/// (the same weekday pattern, shifted). Serves are kept; notes are not — a note is a reminder
+/// for one particular night. Copies go to the end of their day, after anything already there.
+pub fn copy_range(
+    conn: &Connection,
+    src_start: &str,
+    src_end: &str,
+    dest_start: &str,
+) -> Result<CopyResult, String> {
+    let (start, end) = (parse_date(src_start)?, parse_date(src_end)?);
+    let dest = parse_date(dest_start)?;
+    let parse = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| e.to_string());
+    let offset = parse(&dest)?.signed_duration_since(parse(&start)?);
+    if parse(&start)? > parse(&end)? {
+        return Err("Start date must be on or before the end date".into());
+    }
+    if offset.num_days() == 0 {
+        return Err("Pick a different destination than the source".into());
+    }
+
+    let entries = list(conn, &start, &end)?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut result = CopyResult { copied: 0, skipped_archived: 0 };
+    for e in entries {
+        if e.item_archived {
+            result.skipped_archived += 1;
+            continue;
+        }
+        let new_date = (parse(&e.date)? + offset).format("%Y-%m-%d").to_string();
+        let position: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM plan_entry WHERE date = ?1",
+                params![new_date],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO plan_entry (date, item_id, serves, position) VALUES (?1, ?2, ?3, ?4)",
+            params![new_date, e.item_id, e.serves, position],
+        )
+        .map_err(|e| e.to_string())?;
+        result.copied += 1;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
 pub fn remove(conn: &Connection, id: i64) -> Result<(), String> {
     let changed = conn
         .execute("DELETE FROM plan_entry WHERE id = ?1", params![id])
@@ -247,6 +301,17 @@ pub fn plan_update(
 ) -> Result<PlanEntry, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     update(&conn, id, serves, note.as_deref())
+}
+
+#[tauri::command]
+pub fn plan_copy_range(
+    db: State<Db>,
+    src_start: String,
+    src_end: String,
+    dest_start: String,
+) -> Result<CopyResult, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    copy_range(&conn, &src_start, &src_end, &dest_start)
 }
 
 #[tauri::command]
@@ -390,6 +455,59 @@ mod tests {
         assert_eq!(update(&conn, chips.id, Some(2), None).unwrap_err(), "Only meat entries have serves");
         assert!(update(&conn, chips.id, None, Some("crispy")).is_ok());
         assert_eq!(update(&conn, 9999, None, None).unwrap_err(), "Plan entry not found");
+    }
+
+    #[test]
+    fn copy_range_shifts_dates_and_keeps_serves_but_not_notes() {
+        let conn = test_conn();
+        let steak = add(&conn, item_id(&conn, "Steak"), "2026-10-05", Some(4)).unwrap();
+        update(&conn, steak.id, None, Some("use rump")).unwrap();
+        add(&conn, item_id(&conn, "Chips"), "2026-10-05", None).unwrap();
+        add(&conn, item_id(&conn, "Spag bol"), "2026-10-07", None).unwrap();
+        add(&conn, item_id(&conn, "Chow mein"), "2026-10-12", None).unwrap(); // outside the source
+
+        let r = copy_range(&conn, "2026-10-05", "2026-10-11", "2026-10-12").unwrap();
+        assert_eq!(r, CopyResult { copied: 3, skipped_archived: 0 });
+
+        let monday = list(&conn, "2026-10-12", "2026-10-12").unwrap();
+        // The pre-existing Chow mein stays first; copies are appended in their original order.
+        let names: Vec<&str> = monday.iter().map(|e| e.item_name.as_str()).collect();
+        assert_eq!(names, ["Chow mein", "Steak", "Chips"]);
+        assert_eq!(monday[1].serves, Some(4));
+        assert_eq!(monday[1].note, None, "notes are not copied");
+        assert_eq!(positions(&conn, "2026-10-12"), [0, 1, 2]);
+        assert_eq!(names_on(&conn, "2026-10-14"), ["Spag bol"]);
+        // The source is untouched.
+        assert_eq!(names_on(&conn, "2026-10-05"), ["Steak", "Chips"]);
+    }
+
+    fn names_on(conn: &Connection, date: &str) -> Vec<String> {
+        names(conn, date)
+    }
+
+    #[test]
+    fn copy_range_can_go_backwards_and_skips_archived_items() {
+        let conn = test_conn();
+        add(&conn, item_id(&conn, "Chips"), "2026-10-13", None).unwrap();
+        add(&conn, item_id(&conn, "Steak"), "2026-10-14", None).unwrap();
+        conn.execute("UPDATE item SET archived = 1 WHERE name = 'Chips'", []).unwrap();
+        let r = copy_range(&conn, "2026-10-12", "2026-10-18", "2026-10-05").unwrap();
+        assert_eq!(r, CopyResult { copied: 1, skipped_archived: 1 });
+        assert_eq!(names_on(&conn, "2026-10-07"), ["Steak"]);
+        assert!(names_on(&conn, "2026-10-06").is_empty());
+    }
+
+    #[test]
+    fn copy_range_rejects_bad_input() {
+        let conn = test_conn();
+        assert!(copy_range(&conn, "2026-10-05", "2026-10-11", "2026-10-05").is_err(), "same destination");
+        assert!(copy_range(&conn, "2026-10-11", "2026-10-05", "2026-10-12").is_err(), "reversed range");
+        assert!(copy_range(&conn, "x", "2026-10-05", "2026-10-12").is_err());
+        // Copying an empty range is fine and does nothing.
+        assert_eq!(
+            copy_range(&conn, "2026-10-05", "2026-10-11", "2026-10-12").unwrap(),
+            CopyResult { copied: 0, skipped_archived: 0 }
+        );
     }
 
     #[test]
