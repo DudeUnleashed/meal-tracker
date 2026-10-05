@@ -2,7 +2,7 @@
 
 Tracks build status against the phases in [meal-planner-spec.md](meal-planner-spec.md). The spec is the source of truth for *what* we're building; this file records *where we are*. Update it at the end of every phase (and when decisions change), then commit.
 
-**Current phase:** 10 — Release builds (CI workflow written; see log)
+**Current phase:** All phases done — in tester feedback
 **Last updated:** 2026-10-05
 
 ---
@@ -20,7 +20,7 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] **7. Summary UI** — range follows the planner view (1 wk / 2 wk / month) with quick toggles, grouping, contributing items, have-it ticks, copy as text
 - [x] **8. Templates (meals only)** — Templates tab + "start from template" toggle in meal editor
 - [x] **9. Polish** — search, colours, settings, copy last week, JSON backup/restore
-- [~] **10. Release builds** — GitHub Actions `build.yml` (mirrors the budget tracker): test job, then Windows + macOS installers as artifacts. *(Android dropped — not wanted.)*
+- [x] **10. Release builds** — GitHub Actions `build.yml` (mirrors the budget tracker): test job, then Windows + macOS installers as artifacts. *(Android dropped — not wanted.)*
 
 ---
 
@@ -58,6 +58,7 @@ Settled in the spec (see spec §10) plus choices made while setting up:
 | 2026-10-05 | **Android dropped; release builds added (phase 10 reframed).** `.github/workflows/build.yml` mirrors the budget tracker's: on push to `main` (or manual run) a Linux **test** job (`npx tsc --noEmit`, `npm test`, `cargo test`) gates a **build** matrix — Windows (`.msi` + NSIS `.exe`) and macOS (`--target universal-apple-darwin`, `.dmg` + `.app`) via `tauri-apps/tauri-action`, uploaded as `meal-planner-<platform>` artifacts. Spec updated (Windows + macOS only). Verified locally with `npm run tauri build`: produced `Meal Planner_0.1.0_x64_en-US.msi` (3.2 MB) and `Meal Planner_0.1.0_x64-setup.exe` (2.3 MB). The workflow itself has not run yet — there's no GitHub remote for this repo. Notes: app identifier is still `com.mealplanner.app` (changing it would move the data folder away from the existing database); installers use the default Tauri placeholder icon; macOS build is unsigned. |
 | 2026-10-05 | **Exploratory session before tester feedback.** Used the real app like a new user (planned two weeks, summary, small windows, awkward edits). Fixed: (1) changing an item's type after it was planned left entries inconsistent — a meal→meat item's chips had no serves to adjust, a meat→meal item kept stale serves; entries now get the default serves / lose them (test added); (2) ingredient names were case-sensitive, so "carrot" and "Carrot" could coexist and split a shopping total — now unique ignoring case (test added); (3) calendar toolbar squashed/wrapped badly on smaller windows — buttons no-wrap, the toolbar wraps cleanly, window minimum set to 1000×640, summary panel narrower below 1280 px. 65 Rust + 16 frontend tests pass. Ideas found are in the backlog below. |
 | 2026-10-05 | **Tester-feedback round built.** Backend: in-memory **undo** stack (30 steps; snapshots the plan + day info; plan commands are wrapped so every change is one undoable step — `plan_add` now takes an insert position so a drop is a single step) with `plan_undo` / `plan_undo_peek`; **day info** (`day_info` table: note + leftovers flag; list/set/move-leftovers; copy-week carries leftovers, not notes); **meal size** (`plan_entry.scale`, validated 0–10, meat uses serves; summary multiplies meals/sides by it and reports it per source); **data wipe** (`sample` flags set by migration `003`; `remove_sample` keeps user-made things and sample ingredients they still use; `erase_all` keeps categories and settings; both write an automatic backup into `<app data>/backups` first); backups extended (day info, scale, sample flags; older files still import). Frontend: Undo button, day note popover + ＋ note, draggable Leftovers tag and chip, Size buttons in the dinner popover and ×N badge, "Haven't had in a while" box (pure `lib/suggest.ts`), `QuantityInput` + `lib/quantity.ts` for `1.5kg`/`500ml`/`1l`, Settings → Clear data with inline confirmations. 86 Rust + 28 frontend tests pass; verified in the real app (44 checks: undo of add/remove/move, leftovers drag/move/remove, day notes, 2× size flowing into the summary, `1.5kg` → 1500 g and kg refused on a counted ingredient, sample removal keeping a user meal, ERASE gate, backups restorable). |
+| 2026-10-05 | **Repo published and CI verified.** Remote `origin` = https://github.com/DudeUnleashed/meal-tracker (branch renamed `master` → `main`, which the workflow watches); pushed all history. First Actions run succeeded end to end (~14 min): Linux test job (tsc, `npm test`, `cargo test`) → Windows build (`.msi` + NSIS `.exe`, artifact `meal-planner-windows-latest`, 5.3 MB) → macOS universal build (artifact `meal-planner-macos-latest`, 12.1 MB). Download installers from the run's Artifacts section on the Actions tab. |
 
 ## Ideas backlog
 
