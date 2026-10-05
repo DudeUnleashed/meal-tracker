@@ -125,6 +125,86 @@ pub fn add(
     get(conn, conn.last_insert_rowid())
 }
 
+/// Moves an entry to `date` at `position` (0-based; clamped to the end of that day).
+///
+/// Works within a day (reorder) and across days. Both affected days are renumbered 0..n
+/// so positions stay contiguous.
+pub fn move_entry(conn: &Connection, id: i64, date: &str, position: i64) -> Result<PlanEntry, String> {
+    let date = parse_date(date)?;
+    let old_date: String = conn
+        .query_row("SELECT date FROM plan_entry WHERE id = ?1", params![id], |r| r.get(0))
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => "Plan entry not found".to_string(),
+            e => e.to_string(),
+        })?;
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut ids = day_ids(&tx, &date, Some(id))?;
+    let at = position.clamp(0, ids.len() as i64) as usize;
+    ids.insert(at, id);
+    tx.execute("UPDATE plan_entry SET date = ?1 WHERE id = ?2", params![date, id])
+        .map_err(|e| e.to_string())?;
+    renumber(&tx, &ids)?;
+    if old_date != date {
+        let rest = day_ids(&tx, &old_date, None)?;
+        renumber(&tx, &rest)?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    get(conn, id)
+}
+
+/// Entry ids on a day in display order, optionally leaving one out.
+fn day_ids(conn: &Connection, date: &str, exclude: Option<i64>) -> Result<Vec<i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM plan_entry WHERE date = ?1 AND id != ?2 ORDER BY position, id")
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map(params![date, exclude.unwrap_or(-1)], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
+}
+
+fn renumber(conn: &Connection, ids: &[i64]) -> Result<(), String> {
+    for (pos, id) in ids.iter().enumerate() {
+        conn.execute("UPDATE plan_entry SET position = ?1 WHERE id = ?2", params![pos as i64, id])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Changes serves (meat entries only) and/or the entry's note.
+///
+/// `note: Some("")` (or whitespace) clears the note; `None` leaves it unchanged.
+pub fn update(
+    conn: &Connection,
+    id: i64,
+    serves: Option<i64>,
+    note: Option<&str>,
+) -> Result<PlanEntry, String> {
+    let entry = get(conn, id)?;
+    if let Some(n) = serves {
+        if entry.item_type != "meat" {
+            return Err("Only meat entries have serves".into());
+        }
+        if n < 1 {
+            return Err("Serves must be at least 1".into());
+        }
+        conn.execute("UPDATE plan_entry SET serves = ?1 WHERE id = ?2", params![n, id])
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(note) = note {
+        let note = note.trim();
+        conn.execute(
+            "UPDATE plan_entry SET note = ?1 WHERE id = ?2",
+            params![if note.is_empty() { None } else { Some(note) }, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    get(conn, id)
+}
+
 pub fn remove(conn: &Connection, id: i64) -> Result<(), String> {
     let changed = conn
         .execute("DELETE FROM plan_entry WHERE id = ?1", params![id])
@@ -150,6 +230,23 @@ pub fn plan_add(
 ) -> Result<PlanEntry, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     add(&conn, item_id, &date, serves)
+}
+
+#[tauri::command]
+pub fn plan_move(db: State<Db>, id: i64, date: String, position: i64) -> Result<PlanEntry, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    move_entry(&conn, id, &date, position)
+}
+
+#[tauri::command]
+pub fn plan_update(
+    db: State<Db>,
+    id: i64,
+    serves: Option<i64>,
+    note: Option<String>,
+) -> Result<PlanEntry, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    update(&conn, id, serves, note.as_deref())
 }
 
 #[tauri::command]
@@ -219,6 +316,80 @@ mod tests {
         remove(&conn, e.id).unwrap();
         assert!(list(&conn, "2026-10-06", "2026-10-06").unwrap().is_empty());
         assert_eq!(remove(&conn, e.id).unwrap_err(), "Plan entry not found");
+    }
+
+    fn names(conn: &Connection, date: &str) -> Vec<String> {
+        list(conn, date, date).unwrap().into_iter().map(|e| e.item_name).collect()
+    }
+
+    fn positions(conn: &Connection, date: &str) -> Vec<i64> {
+        list(conn, date, date).unwrap().iter().map(|e| e.position).collect()
+    }
+
+    /// Steak, Chips, Garden salad on 6 Oct.
+    fn setup_day(conn: &Connection) -> Vec<PlanEntry> {
+        ["Steak", "Chips", "Garden salad"]
+            .iter()
+            .map(|n| add(conn, item_id(conn, n), "2026-10-06", None).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn move_reorders_within_a_day() {
+        let conn = test_conn();
+        let e = setup_day(&conn);
+        move_entry(&conn, e[2].id, "2026-10-06", 0).unwrap();
+        assert_eq!(names(&conn, "2026-10-06"), ["Garden salad", "Steak", "Chips"]);
+        move_entry(&conn, e[2].id, "2026-10-06", 99).unwrap(); // clamps to the end
+        assert_eq!(names(&conn, "2026-10-06"), ["Steak", "Chips", "Garden salad"]);
+        move_entry(&conn, e[0].id, "2026-10-06", 1).unwrap();
+        assert_eq!(names(&conn, "2026-10-06"), ["Chips", "Steak", "Garden salad"]);
+        assert_eq!(positions(&conn, "2026-10-06"), [0, 1, 2]);
+    }
+
+    #[test]
+    fn move_across_days_renumbers_both() {
+        let conn = test_conn();
+        let e = setup_day(&conn);
+        let other = add(&conn, item_id(&conn, "Spag bol"), "2026-10-07", None).unwrap();
+
+        let moved = move_entry(&conn, e[0].id, "2026-10-07", 0).unwrap();
+        assert_eq!(moved.date, "2026-10-07");
+        assert_eq!(names(&conn, "2026-10-07"), ["Steak", "Spag bol"]);
+        assert_eq!(names(&conn, "2026-10-06"), ["Chips", "Garden salad"]);
+        assert_eq!(positions(&conn, "2026-10-06"), [0, 1], "source day has no gap");
+        assert_eq!(get(&conn, other.id).unwrap().position, 1);
+        assert_eq!(moved.serves, Some(3), "serves survive a move");
+    }
+
+    #[test]
+    fn move_to_an_empty_day_and_errors() {
+        let conn = test_conn();
+        let e = setup_day(&conn);
+        let m = move_entry(&conn, e[1].id, "2026-12-25", 5).unwrap();
+        assert_eq!((m.date.as_str(), m.position), ("2026-12-25", 0));
+        assert_eq!(move_entry(&conn, 9999, "2026-10-06", 0).unwrap_err(), "Plan entry not found");
+        assert!(move_entry(&conn, e[0].id, "bad", 0).is_err());
+    }
+
+    #[test]
+    fn update_serves_and_note() {
+        let conn = test_conn();
+        let steak = add(&conn, item_id(&conn, "Steak"), "2026-10-06", None).unwrap();
+        let u = update(&conn, steak.id, Some(5), Some("  use rump  ")).unwrap();
+        assert_eq!((u.serves, u.note.as_deref()), (Some(5), Some("use rump")));
+        // None leaves fields alone.
+        let u = update(&conn, steak.id, None, None).unwrap();
+        assert_eq!((u.serves, u.note.as_deref()), (Some(5), Some("use rump")));
+        // Blank clears the note.
+        let u = update(&conn, steak.id, None, Some("   ")).unwrap();
+        assert_eq!(u.note, None);
+
+        assert!(update(&conn, steak.id, Some(0), None).is_err());
+        let chips = add(&conn, item_id(&conn, "Chips"), "2026-10-06", None).unwrap();
+        assert_eq!(update(&conn, chips.id, Some(2), None).unwrap_err(), "Only meat entries have serves");
+        assert!(update(&conn, chips.id, None, Some("crispy")).is_ok());
+        assert_eq!(update(&conn, 9999, None, None).unwrap_err(), "Plan entry not found");
     }
 
     #[test]

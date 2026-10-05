@@ -147,6 +147,12 @@ export const api = {
     list: (start: string, end: string) => invoke<PlanEntry[]>("plan_list", { start, end }),
     add: (itemId: number, date: string, serves?: number) =>
       invoke<PlanEntry>("plan_add", { itemId, date, serves: serves ?? null }),
+    /** Moves to `date` at 0-based `position` in that day (clamped to the end). */
+    move: (id: number, date: string, position: number) =>
+      invoke<PlanEntry>("plan_move", { id, date, position }),
+    /** Omitted fields are unchanged; a blank note clears it. */
+    update: (id: number, patch: { serves?: number; note?: string }) =>
+      invoke<PlanEntry>("plan_update", { id, serves: patch.serves ?? null, note: patch.note ?? null }),
     remove: (id: number) => invoke<void>("plan_remove", { id }),
   },
   settings: {

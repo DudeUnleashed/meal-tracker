@@ -28,6 +28,8 @@ pub fn run() {
             commands::summary::summary_get,
             commands::plan::plan_list,
             commands::plan::plan_add,
+            commands::plan::plan_move,
+            commands::plan::plan_update,
             commands::plan::plan_remove,
             commands::settings::settings_get,
             commands::settings::settings_set,
