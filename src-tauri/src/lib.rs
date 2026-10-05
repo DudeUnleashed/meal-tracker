@@ -26,6 +26,11 @@ pub fn run() {
             commands::items::items_duplicate,
             commands::items::items_archive,
             commands::summary::summary_get,
+            commands::plan::plan_list,
+            commands::plan::plan_add,
+            commands::plan::plan_remove,
+            commands::settings::settings_get,
+            commands::settings::settings_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -98,6 +98,23 @@ export interface Summary {
   rows: SummaryRow[];
 }
 
+export interface PlanEntry {
+  id: number;
+  /** ISO `YYYY-MM-DD`. */
+  date: string;
+  item_id: number;
+  item_name: string;
+  item_type: ItemType;
+  item_colour: string | null;
+  item_archived: boolean;
+  /** Meat entries only. */
+  serves: number | null;
+  note: string | null;
+  position: number;
+}
+
+export type Settings = Record<string, string>;
+
 export const api = {
   categories: {
     list: () => invoke<IngredientCategory[]>("categories_list"),
@@ -125,6 +142,16 @@ export const api = {
     duplicate: (id: number) => invoke<Item>("items_duplicate", { id }),
     archive: (id: number, archived: boolean) =>
       invoke<Item>("items_archive", { id, archived }),
+  },
+  plan: {
+    list: (start: string, end: string) => invoke<PlanEntry[]>("plan_list", { start, end }),
+    add: (itemId: number, date: string, serves?: number) =>
+      invoke<PlanEntry>("plan_add", { itemId, date, serves: serves ?? null }),
+    remove: (id: number) => invoke<void>("plan_remove", { id }),
+  },
+  settings: {
+    get: () => invoke<Settings>("settings_get"),
+    set: (key: string, value: string) => invoke<void>("settings_set", { key, value }),
   },
   summary: {
     /** Dates are ISO `YYYY-MM-DD`, inclusive. */
