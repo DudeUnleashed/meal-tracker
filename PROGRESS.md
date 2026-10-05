@@ -2,7 +2,7 @@
 
 Tracks build status against the phases in [meal-planner-spec.md](meal-planner-spec.md). The spec is the source of truth for *what* we're building; this file records *where we are*. Update it at the end of every phase (and when decisions change), then commit.
 
-**Current phase:** 2 — Ingredients + items CRUD (not started)
+**Current phase:** 3 — Summary logic (not started)
 **Last updated:** 2026-10-05
 
 ---
@@ -12,7 +12,7 @@ Tracks build status against the phases in [meal-planner-spec.md](meal-planner-sp
 Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 - [x] **1. Scaffold** — Tauri 2 + React/TS + SQLite, migrations, seed data, two-page navigation shell
-- [ ] **2. Ingredients + items CRUD** — Library page Items and Ingredients tabs, all three types, per-serve labelling for meats
+- [x] **2. Ingredients + items CRUD** — Library page Items and Ingredients tabs, all three types, per-serve labelling for meats
 - [ ] **3. Summary logic** — Rust `summary()` with unit tests, before any UI depends on it
 - [ ] **4. Planner calendar** — scrollable weeks (past + future), lazy loading, Today button, show entries
 - [ ] **5. Drag and drop** — library → day, move between days, remove, serves stepper for meats
@@ -44,3 +44,4 @@ Settled in the spec (see spec §10) plus choices made while setting up:
 |---|---|
 | 2026-10-05 | Spec read, stack confirmed against budget tracker, git repo initialised, this tracker created. |
 | 2026-10-05 | **Phase 1 done.** Tauri 2 + React 19/TS 5.8/Vite 7/Tailwind 4 scaffold; Vite/TS/plugin-react pinned to match budget tracker. SQLite schema (`001_init.sql`) + seed (`002_seed.sql`: 7 categories, 34 ingredients, 8 items, 2 templates, settings) applied via `rusqlite_migration` on startup; DB lives in the app data dir (`%APPDATA%\com.mealplanner.app\meal_planner.db`). Planner/Library navigation shell; `categories_list` command used as a backend smoke test. `cargo test` (migration + seed counts) and `npm run build` pass; app launches and creates its DB. |
+| 2026-10-05 | **Phase 2 done.** Rust commands `ingredients_{list,create,update,archive}` and `items_{list,get,create,update,duplicate,archive}` (core logic in plain fns taking a `Connection`; 10 unit tests pass). Library page: **Items** tab (type filter, search, show archived, recipe-style editor with ingredient lines, per-serve labelling for meat, inline ingredient creation, reorder, duplicate, archive/restore, unsaved-changes guard) and **Ingredients** tab (create/edit/archive, used-in count). Templates and Settings tabs still placeholders. Not yet clicked through by hand — worth a manual pass in `npm run tauri dev`. |

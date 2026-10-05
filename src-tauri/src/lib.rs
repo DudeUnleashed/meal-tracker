@@ -13,7 +13,19 @@ pub fn run() {
             app.manage(db);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::categories::categories_list])
+        .invoke_handler(tauri::generate_handler![
+            commands::categories::categories_list,
+            commands::ingredients::ingredients_list,
+            commands::ingredients::ingredients_create,
+            commands::ingredients::ingredients_update,
+            commands::ingredients::ingredients_archive,
+            commands::items::items_list,
+            commands::items::items_get,
+            commands::items::items_create,
+            commands::items::items_update,
+            commands::items::items_duplicate,
+            commands::items::items_archive,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

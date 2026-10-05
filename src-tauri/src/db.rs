@@ -29,6 +29,15 @@ pub fn init(app: &AppHandle) -> Result<Db, Box<dyn std::error::Error>> {
     Ok(Db(Mutex::new(conn)))
 }
 
+/// Fresh in-memory database with schema and seed data, for unit tests.
+#[cfg(test)]
+pub fn test_conn() -> Connection {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    migrate(&mut conn).unwrap();
+    conn
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
