@@ -1,6 +1,6 @@
 # Meal Planner — Project Spec
 
-A desktop app (Android later) for planning dinners a week or fortnight ahead and getting a single shopping summary of the meat, veg and other key ingredients needed for the shop.
+A desktop app (Windows and macOS) for planning dinners a week or fortnight ahead and getting a single shopping summary of the meat, veg and other key ingredients needed for the shop.
 
 This is a planning tool for the *big stuff*, not a full recipe app. Meals only need the ingredients that matter for the shop — spices, oil, salt etc. can be left out.
 
@@ -28,10 +28,10 @@ This is a planning tool for the *big stuff*, not a full recipe app. Meals only n
 
 Match the budget tracker so patterns and code can be reused:
 
-- **Tauri 2** (Rust backend) — desktop first; Tauri 2's Android target is the path to mobile later.
+- **Tauri 2** (Rust backend) — Windows and macOS desktop only; no mobile release is planned. A GitHub Actions workflow builds the installers (see §9, phase 10).
 - **React + TypeScript** frontend (Vite).
 - **SQLite** via `rusqlite` (or `sqlx`) on the Rust side, exposed through Tauri commands.
-- **Drag and drop:** `@dnd-kit/core` — supports mouse *and* touch sensors, so it carries over to Android.
+- **Drag and drop:** `@dnd-kit/core` — mouse and touch sensors (touch long-press keeps touchscreen laptops working).
 - **Dates:** `date-fns`.
 - Styling: whatever the budget tracker uses, for consistency.
 
@@ -295,7 +295,7 @@ Keep each phase small enough to finish and review in one session; commit after e
 7. **Summary UI** — range follows the planner view (1 wk / 2 wk / month) with quick toggles, grouping, contributing items, have-it ticks, copy as text.
 8. **Templates (meals only)** — Templates tab + "start from template" toggle in the meal editor.
 9. **Polish** — search, colours, settings, copy last week, JSON backup/restore.
-10. **Android (stretch)** — Tauri Android build; on narrow screens make the library a slide-up drawer; long-press activation for dnd-kit touch.
+10. **Release builds** — GitHub Actions workflow (same as the budget tracker): test on Linux, then build the Windows installers (`.msi`, NSIS `.exe`) and a universal macOS `.dmg`/`.app`, uploaded as artifacts. *(Android was dropped — not wanted.)*
 
 ---
 
