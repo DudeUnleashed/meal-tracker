@@ -95,7 +95,7 @@ export default function SummaryPanel({
   const remaining = summary ? summary.rows.filter((r) => !have.has(r.ingredient_id)).length : 0;
 
   return (
-    <aside className="flex w-96 shrink-0 flex-col border-l border-slate-200 bg-white">
+    <aside className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-white xl:w-96">
       <div className="space-y-2 border-b border-slate-200 p-3">
         <h2 className="font-semibold">Shopping summary</h2>
         <div className="flex gap-1 rounded bg-slate-100 p-0.5">

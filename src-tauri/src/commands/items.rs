@@ -194,6 +194,9 @@ pub fn create(conn: &mut Connection, input: &ItemInput) -> Result<Item, String> 
 pub fn update(conn: &mut Connection, id: i64, input: &ItemInput) -> Result<Item, String> {
     let name = validate(input)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let old_type: Option<String> = tx
+        .query_row("SELECT type FROM item WHERE id = ?1", params![id], |r| r.get(0))
+        .ok();
     let changed = tx
         .execute(
             "UPDATE item SET name = ?1, type = ?2, colour = ?3, notes = ?4, template_id = ?5
@@ -214,6 +217,23 @@ pub fn update(conn: &mut Connection, id: i64, input: &ItemInput) -> Result<Item,
     tx.execute("DELETE FROM item_ingredient WHERE item_id = ?1", params![id])
         .map_err(|e| e.to_string())?;
     write_lines(&tx, id, &input.lines)?;
+
+    // Only meat entries carry serves. Keep already-planned entries consistent when the type
+    // changes: a meal becoming meat needs a serves count to adjust; the reverse must drop it.
+    let now_meat = input.item_type == "meat";
+    if now_meat && old_type.as_deref() != Some("meat") {
+        let default: i64 = super::settings::get(&tx, "default_meat_serves")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        tx.execute(
+            "UPDATE plan_entry SET serves = ?1 WHERE item_id = ?2 AND serves IS NULL",
+            params![default, id],
+        )
+        .map_err(|e| e.to_string())?;
+    } else if !now_meat && old_type.as_deref() == Some("meat") {
+        tx.execute("UPDATE plan_entry SET serves = NULL WHERE item_id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
     get(conn, id)
 }
@@ -348,6 +368,48 @@ mod tests {
         let steak = list(&conn, Some("meat"), Some("Steak"), false).unwrap().remove(0);
         let steak = get(&conn, steak.id).unwrap();
         assert_eq!(steak.lines[0].quantity, 250.0);
+    }
+
+    fn as_input(conn: &Connection, id: i64, item_type: &str) -> ItemInput {
+        let it = get(conn, id).unwrap();
+        ItemInput {
+            name: it.name,
+            item_type: item_type.into(),
+            colour: it.colour,
+            notes: it.notes,
+            template_id: None,
+            lines: it.lines.iter().map(|l| LineInput { ingredient_id: l.ingredient_id, quantity: l.quantity }).collect(),
+        }
+    }
+
+    #[test]
+    fn changing_type_keeps_planned_entries_consistent() {
+        use crate::commands::{plan, settings};
+        let mut conn = test_conn();
+        let bol = list(&conn, None, Some("Spag bol"), false).unwrap().remove(0).id;
+        let steak = list(&conn, None, Some("Steak"), false).unwrap().remove(0).id;
+        let bol_entry = plan::add(&conn, bol, "2026-10-06", None).unwrap();
+        let steak_entry = plan::add(&conn, steak, "2026-10-06", Some(4)).unwrap();
+        assert_eq!((bol_entry.serves, steak_entry.serves), (None, Some(4)));
+
+        // meal -> meat: entries get the default serves so they can be adjusted.
+        settings::set(&conn, "default_meat_serves", "5").unwrap();
+        let to_meat = as_input(&conn, bol, "meat");
+        update(&mut conn, bol, &to_meat).unwrap();
+        let day = plan::list(&conn, "2026-10-06", "2026-10-06").unwrap();
+        assert_eq!(day.iter().find(|e| e.item_id == bol).unwrap().serves, Some(5));
+
+        // meat -> meal: stale serves are dropped.
+        let to_meal = as_input(&conn, steak, "meal");
+        update(&mut conn, steak, &to_meal).unwrap();
+        let day = plan::list(&conn, "2026-10-06", "2026-10-06").unwrap();
+        assert_eq!(day.iter().find(|e| e.item_id == steak).unwrap().serves, None);
+
+        // Edits that don't change the type leave serves alone.
+        plan::update(&conn, bol_entry.id, Some(2), None).unwrap();
+        let same = as_input(&conn, bol, "meat");
+        update(&mut conn, bol, &same).unwrap();
+        assert_eq!(plan::list(&conn, "2026-10-06", "2026-10-06").unwrap().iter().find(|e| e.item_id == bol).unwrap().serves, Some(2));
     }
 
     #[test]

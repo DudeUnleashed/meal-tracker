@@ -52,10 +52,10 @@ export default function Calendar({
 
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 bg-white px-4 py-2">
         <button
           onClick={goToday}
-          className="rounded border border-slate-300 px-3 py-1 text-sm font-medium hover:bg-slate-50"
+          className="whitespace-nowrap rounded border border-slate-300 px-3 py-1 text-sm font-medium hover:bg-slate-50"
         >
           Today
         </button>
@@ -77,16 +77,16 @@ export default function Calendar({
             </button>
           </div>
         )}
-        <span className="text-sm font-medium text-slate-700">
+        <span className="whitespace-nowrap text-sm font-medium text-slate-700">
           {view === "scroll" ? format(new Date(), "EEEE d MMMM yyyy") : block.title}
         </span>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           {(view === "1w" || view === "2w") && (
             <button
               onClick={onCopyPrevious}
               title={`Copy the dinners from the previous ${view === "1w" ? "week" : "2 weeks"} into this block`}
-              className="rounded border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              className="whitespace-nowrap rounded border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
             >
               Copy {view === "1w" ? "last week" : "last fortnight"}
             </button>
@@ -96,7 +96,7 @@ export default function Calendar({
               <button
                 key={v.id}
                 onClick={() => onViewChange(v.id)}
-                className={`rounded px-2.5 py-1 text-xs font-medium ${
+                className={`whitespace-nowrap rounded px-2.5 py-1 text-xs font-medium ${
                   view === v.id ? "bg-white text-emerald-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
                 }`}
               >
@@ -106,7 +106,7 @@ export default function Calendar({
           </div>
           <button
             onClick={onToggleSummary}
-            className={`rounded px-3 py-1 text-sm font-medium ${
+            className={`whitespace-nowrap rounded px-3 py-1 text-sm font-medium ${
               summaryOpen
                 ? "bg-emerald-600 text-white hover:bg-emerald-700"
                 : "border border-slate-300 hover:bg-slate-50"
