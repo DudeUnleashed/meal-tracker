@@ -17,8 +17,10 @@ import { ChipBody } from "../components/calendar/cells";
 import ItemDrawer from "../components/ItemDrawer";
 import ItemLibrary, { CardPreview } from "../components/ItemLibrary";
 import PlanEntryPopover from "../components/PlanEntryPopover";
+import SummaryPanel, { type SummaryMode } from "../components/SummaryPanel";
 import { api, errorMessage, type PlanEntry } from "../lib/api";
-import type { WeekStart } from "../lib/dates";
+import { toIso, type WeekStart } from "../lib/dates";
+import { blockRange, shiftRange, stepAnchor } from "../lib/ranges";
 
 const DEFAULT_VIEW: CalendarView = "2w";
 
@@ -43,6 +45,11 @@ export default function PlannerPage() {
   const [dragging, setDragging] = useState<DragData | null>(null);
   const [popover, setPopover] = useState<{ entry: PlanEntry; anchor: DOMRect } | null>(null);
   const [drawerItemId, setDrawerItemId] = useState<number | null>(null);
+  // Any date inside the block on screen; the summary follows it.
+  const [anchor, setAnchor] = useState(() => toIso(new Date()));
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  // A user-picked summary range that no longer follows the calendar (null = follow the view).
+  const [custom, setCustom] = useState<{ start: string; end: string } | null>(null);
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -88,6 +95,30 @@ export default function PlannerPage() {
   );
 
   const reload = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  // The summary covers the block on screen (the scroll view counts as one week) unless customised.
+  const summaryView = view === "scroll" ? "1w" : view;
+  const block = weekStart === null ? null : blockRange(summaryView, anchor, weekStart);
+  const summaryStart = custom?.start ?? block?.start ?? anchor;
+  const summaryEnd = custom?.end ?? block?.end ?? anchor;
+  const summaryMode: SummaryMode = custom ? "custom" : summaryView;
+
+  function onSummaryMode(mode: SummaryMode) {
+    if (mode === "custom") {
+      setCustom({ start: summaryStart, end: summaryEnd });
+    } else {
+      setCustom(null);
+      changeView(mode);
+    }
+  }
+
+  function onSummaryStep(direction: -1 | 1) {
+    if (custom) setCustom(shiftRange(custom.start, custom.end, direction));
+    else if (weekStart !== null) {
+      if (view === "scroll") changeView("1w");
+      setAnchor(stepAnchor(summaryView, anchor, direction, weekStart));
+    }
+  }
 
   function onDragStart(e: DragStartEvent) {
     setPopover(null);
@@ -144,13 +175,34 @@ export default function PlannerPage() {
                   key={weekStart}
                   weekStart={weekStart}
                   view={view}
-                  onViewChange={changeView}
+                  onViewChange={(v) => {
+                    setCustom(null);
+                    changeView(v);
+                  }}
+                  anchor={anchor}
+                  onAnchorChange={setAnchor}
                   refreshKey={refreshKey}
+                  summaryOpen={summaryOpen}
+                  onToggleSummary={() => setSummaryOpen((o) => !o)}
                 />
               )}
             </div>
           </section>
-          <ItemLibrary refreshKey={refreshKey} />
+          {/* Kept mounted (just hidden) so the library keeps its tab and search while summarising. */}
+          <div className={summaryOpen ? "hidden" : "flex"}>
+            <ItemLibrary refreshKey={refreshKey} />
+          </div>
+          {summaryOpen && (
+            <SummaryPanel
+              start={summaryStart}
+              end={summaryEnd}
+              mode={summaryMode}
+              onMode={onSummaryMode}
+              onStep={onSummaryStep}
+              onCustomRange={(start, end) => setCustom({ start, end })}
+              refreshKey={refreshKey}
+            />
+          )}
         </div>
       </PlannerActionsContext.Provider>
 

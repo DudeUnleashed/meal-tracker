@@ -1,16 +1,11 @@
-import {
-  addMonths,
-  differenceInCalendarWeeks,
-  endOfMonth,
-  format,
-  startOfMonth,
-} from "date-fns";
+import { format } from "date-fns";
 import { useState } from "react";
-import { daysOfWeek, fromIso, shiftWeeks, toIso, weekStartOf, type WeekStart } from "../lib/dates";
+import { daysOfWeek, fromIso, toIso, type WeekStart } from "../lib/dates";
+import { blockRange, stepAnchor, type CalendarView } from "../lib/ranges";
 import BlockView from "./calendar/BlockView";
 import ScrollView from "./calendar/ScrollView";
 
-export type CalendarView = "1w" | "2w" | "month" | "scroll";
+export type { CalendarView };
 
 export const VIEWS: { id: CalendarView; label: string }[] = [
   { id: "1w", label: "1 week" },
@@ -23,53 +18,34 @@ interface Props {
   weekStart: WeekStart;
   view: CalendarView;
   onViewChange: (view: CalendarView) => void;
+  /** Any date inside the block being shown; owned by the planner so the summary can follow it. */
+  anchor: string;
+  onAnchorChange: (anchor: string) => void;
   /** Bump to reload entries from the database (e.g. after an edit elsewhere). */
   refreshKey?: number;
+  summaryOpen: boolean;
+  onToggleSummary: () => void;
 }
 
-export default function Calendar({ weekStart, view, onViewChange, refreshKey = 0 }: Props) {
-  // Any date inside the block being shown; switching views keeps you in the same place.
-  const [anchor, setAnchor] = useState(() => toIso(new Date()));
+export default function Calendar({
+  weekStart,
+  view,
+  onViewChange,
+  anchor,
+  onAnchorChange,
+  refreshKey = 0,
+  summaryOpen,
+  onToggleSummary,
+}: Props) {
   const [todayTick, setTodayTick] = useState(0);
-
-  const anchorDate = fromIso(anchor);
-  const blockWeeks = view === "1w" ? 1 : 2;
-
-  // What the block views show.
-  let firstWeek: string;
-  let weekCount: number;
-  let month: string | undefined;
-  let title: string;
-  if (view === "month") {
-    const first = startOfMonth(anchorDate);
-    const last = endOfMonth(anchorDate);
-    const start = weekStartOf(first, weekStart);
-    firstWeek = toIso(start);
-    weekCount = differenceInCalendarWeeks(last, start, { weekStartsOn: weekStart }) + 1;
-    month = format(first, "yyyy-MM");
-    title = format(first, "MMMM yyyy");
-  } else {
-    firstWeek = toIso(weekStartOf(anchorDate, weekStart));
-    weekCount = blockWeeks;
-    const lastDay = fromIso(shiftWeeks(firstWeek, blockWeeks - 1));
-    lastDay.setDate(lastDay.getDate() + 6);
-    title = `${format(fromIso(firstWeek), "d MMM")} – ${format(lastDay, "d MMM yyyy")}`;
-  }
-
-  function step(direction: -1 | 1) {
-    setAnchor(
-      view === "month"
-        ? toIso(addMonths(startOfMonth(anchorDate), direction))
-        : shiftWeeks(firstWeek, direction * blockWeeks),
-    );
-  }
+  const block = blockRange(view, anchor, weekStart);
 
   function goToday() {
-    setAnchor(toIso(new Date()));
+    onAnchorChange(toIso(new Date()));
     setTodayTick((n) => n + 1);
   }
 
-  const dayNames = daysOfWeek(firstWeek).map((d) => format(fromIso(d), "EEE"));
+  const dayNames = daysOfWeek(block.firstWeek).map((d) => format(fromIso(d), "EEE"));
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -83,14 +59,14 @@ export default function Calendar({ weekStart, view, onViewChange, refreshKey = 0
         {view !== "scroll" && (
           <div className="flex items-center gap-1">
             <button
-              onClick={() => step(-1)}
+              onClick={() => onAnchorChange(stepAnchor(view, anchor, -1, weekStart))}
               aria-label="Previous"
               className="rounded px-2 py-1 text-slate-600 hover:bg-slate-100"
             >
               ‹
             </button>
             <button
-              onClick={() => step(1)}
+              onClick={() => onAnchorChange(stepAnchor(view, anchor, 1, weekStart))}
               aria-label="Next"
               className="rounded px-2 py-1 text-slate-600 hover:bg-slate-100"
             >
@@ -99,21 +75,33 @@ export default function Calendar({ weekStart, view, onViewChange, refreshKey = 0
           </div>
         )}
         <span className="text-sm font-medium text-slate-700">
-          {view === "scroll" ? format(new Date(), "EEEE d MMMM yyyy") : title}
+          {view === "scroll" ? format(new Date(), "EEEE d MMMM yyyy") : block.title}
         </span>
 
-        <div className="ml-auto flex gap-1 rounded bg-slate-100 p-0.5">
-          {VIEWS.map((v) => (
-            <button
-              key={v.id}
-              onClick={() => onViewChange(v.id)}
-              className={`rounded px-2.5 py-1 text-xs font-medium ${
-                view === v.id ? "bg-white text-emerald-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              {v.label}
-            </button>
-          ))}
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex gap-1 rounded bg-slate-100 p-0.5">
+            {VIEWS.map((v) => (
+              <button
+                key={v.id}
+                onClick={() => onViewChange(v.id)}
+                className={`rounded px-2.5 py-1 text-xs font-medium ${
+                  view === v.id ? "bg-white text-emerald-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={onToggleSummary}
+            className={`rounded px-3 py-1 text-sm font-medium ${
+              summaryOpen
+                ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                : "border border-slate-300 hover:bg-slate-50"
+            }`}
+          >
+            {summaryOpen ? "◂ Library" : "Summary ▸"}
+          </button>
         </div>
       </div>
 
@@ -130,9 +118,9 @@ export default function Calendar({ weekStart, view, onViewChange, refreshKey = 0
           <ScrollView weekStart={weekStart} refreshKey={refreshKey} todayTick={todayTick} />
         ) : (
           <BlockView
-            firstWeek={firstWeek}
-            weekCount={weekCount}
-            month={month}
+            firstWeek={block.firstWeek}
+            weekCount={block.weekCount}
+            month={block.month}
             weekStart={weekStart}
             refreshKey={refreshKey}
           />

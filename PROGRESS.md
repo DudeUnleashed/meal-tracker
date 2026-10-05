@@ -2,7 +2,7 @@
 
 Tracks build status against the phases in [meal-planner-spec.md](meal-planner-spec.md). The spec is the source of truth for *what* we're building; this file records *where we are*. Update it at the end of every phase (and when decisions change), then commit.
 
-**Current phase:** 7 — Summary UI (not started)
+**Current phase:** 8 — Templates (meals only) (not started)
 **Last updated:** 2026-10-05
 
 ---
@@ -17,7 +17,7 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] **4. Planner calendar** — view switcher (1 week / 2 weeks / month / scroll), prev/next, lazy loading, Today button, show entries
 - [x] **5. Drag and drop** — library → day, move between days, remove, serves stepper for meats
 - [x] **6. Notes + history** — entry notes in chip popover, 📝 indicator, latest note and "last had" on cards, history in item editor, edit-item drawer from planner
-- [ ] **7. Summary UI** — range follows the planner view (1 wk / 2 wk / month) with quick toggles, grouping, contributing items, have-it ticks, copy as text
+- [x] **7. Summary UI** — range follows the planner view (1 wk / 2 wk / month) with quick toggles, grouping, contributing items, have-it ticks, copy as text
 - [ ] **8. Templates (meals only)** — Templates tab + "start from template" toggle in meal editor
 - [ ] **9. Polish** — search, colours, settings, copy last week, JSON backup/restore
 - [ ] **10. Android (stretch)** — Tauri Android build, slide-up library drawer, long-press dnd-kit activation
@@ -30,7 +30,7 @@ Settled in the spec (see spec §10) plus choices made while setting up:
 
 - Stack mirrors the budget tracker (https://github.com/DudeUnleashed/budget-tracker): Tauri 2, React 19, TypeScript 5.8, Vite 7, Tailwind CSS 4 (`@tailwindcss/vite`).
 - Rust: `rusqlite` 0.32 (`bundled`) + `rusqlite_migration` 1, `serde`/`serde_json`, `chrono`; `tauri-plugin-dialog` for backup file pickers.
-- Frontend adds `@dnd-kit/core` and `date-fns`.
+- Frontend adds `@dnd-kit/core` and `date-fns`; `vitest` (`npm test`) for pure frontend logic (quantity formatting, copy-as-text, view ranges).
 - Dates stored as ISO `YYYY-MM-DD` strings.
 - Git repo initialised in this folder; commit after each phase.
 
@@ -52,3 +52,4 @@ Settled in the spec (see spec §10) plus choices made while setting up:
 | 2026-10-05 | **Planner views added (requested).** Calendar split into `Calendar` (toolbar, view switcher, ‹ › stepping, Today) + `calendar/BlockView` (1 week, 2 weeks, month grid filling the space) + `calendar/ScrollView` (the continuous lazy-loaded list) + shared `calendar/cells` (WeekRow/DayCell/EntryChip, reused by drag and drop next). View persisted via validated `planner_view` setting (default `2w`). Verified in the real app: all four views, stepping, Today, persistence. Spec §5 and phase list updated, incl. that the phase 7 summary follows the visible block. |
 | 2026-10-05 | **Phase 5 done.** Backend: `plan_move` (reorder within a day / move across days, both days renumbered, position clamped) and `plan_update` (serves for meat only, ≥1; note set/clear — UI for notes is phase 6); 4 new tests (36 total pass). Frontend: `ItemLibrary` sidebar (Meal/Meat/Side tabs, search across all types), `@dnd-kit/core` `DndContext` in `PlannerPage` (mouse: 6px drag threshold so clicks still work; touch: 250ms long-press ready for Android). Library card → day appends, → chip inserts before it (meat defaults to the serves setting); chip → another day/position; meat chips have a − N serves + stepper; ✕ removes. Every change goes to the DB then reloads the calendar. Drop on a day vs a chip uses a custom collision rule that prefers the chip. Verified in the real app with synthetic mouse drags via WebView2 remote debugging (9 scenarios: drop, insert-before, stepper ±, cross-day move, append, reorder, remove, click-without-drag). Test data removed afterwards. |
 | 2026-10-05 | **Phase 6 done.** Backend (`commands/usage.rs`): `items_usage(today)` → per item last had (latest date before today), next planned (today or later), latest note + its date; `items_history(id)` → every entry newest first with serves/note. 7 new tests (43 total pass). Frontend: click a chip → `PlanEntryPopover` (serves stepper for meat, note textarea saved on blur / outside click / Esc / Done, Remove, Edit item); `ItemDrawer` slide-over reuses `ItemEditor` so edits apply everywhere without leaving the planner; library cards show "planned Thu · last had 12 days ago" (or "not had yet") and the newest note as an amber reminder; "Least recently had first" sort; `ItemEditor` has a History list (dates, serves, notes, "planned" tag). Verified in the real app via WebView2 (18 checks: card labels, sort, note save + reminder, drawer edit → calendar, history in drawer and Library page, drag doesn't open the popover). Test data removed afterwards. |
+| 2026-10-05 | **Phase 7 done.** `SummaryPanel` (opened by the calendar's **Summary ▸** button, replacing the library sidebar, which stays mounted so its tab/search survive): range follows the planner view — **1 wk / 2 wk / Month** toggles switch the calendar too, ‹ › step the calendar, **Custom** gives independent start/end date inputs (invalid range shows a message); scroll view summarises the current week. Rows grouped by category, quantities formatted (g→kg, ml→L, `each` bare), faint one-line contributor hint (e.g. "Spag bol (2×), Chow mein") expanding to per-entry detail with serves and date; "have it" checkboxes (React state only, reset when the range changes or the panel closes); **Copy as text** leaves ticked rows out; totals reload when the plan changes while open. Shared range logic in `lib/ranges.ts` (calendar's anchor now lives in `PlannerPage`). Added `vitest` + 16 tests (formatting, grouping, text export, ranges). Verified in the real app with known data (20 checks: totals by hand, stepping, month, ticks, copy, custom, live update on chip removal). Test data removed. |
