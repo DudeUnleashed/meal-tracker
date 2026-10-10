@@ -198,9 +198,10 @@ mod tests {
             colour: None,
             notes: None,
             template_id: None,
+            category_id: None,
             lines: vec![
-                items::LineInput { ingredient_id: mince, quantity: 400.0, group_by: false },
-                items::LineInput { ingredient_id: leek, quantity: 2.0, group_by: false },
+                items::LineInput { ingredient_id: mince, quantity: 400.0 },
+                items::LineInput { ingredient_id: leek, quantity: 2.0 },
             ],
         };
         let pie = items::create(&mut conn, &input).unwrap();
@@ -234,6 +235,7 @@ mod tests {
             name: "Mine".into(),
             item_type: "meal".into(),
             colour: None,
+            category_id: None,
             lines: vec![templates::LineInput {
                 label: "Rice".into(),
                 ingredient_id: Some(id(&conn, "ingredient", "Arborio rice")),

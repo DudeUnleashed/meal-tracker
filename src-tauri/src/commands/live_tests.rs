@@ -27,6 +27,7 @@ fn steamed_veg(conn: &mut Connection) -> templates::Template {
         name: "Steamed veggies".into(),
         item_type: "side".into(),
         colour: Some("#16a34a".into()),
+        category_id: None,
         lines: vec![LineInput { label: "Veg".into(), multi: true, options, ..Default::default() }],
     };
     templates::create(conn, &input).unwrap()
@@ -76,6 +77,7 @@ fn creating_a_template_makes_its_chip_and_editing_keeps_line_ids() {
         name: "Steamed veg".into(),
         item_type: "side".into(),
         colour: None,
+        category_id: None,
         lines: vec![LineInput { id: Some(line.id), label: "Veg".into(), multi: true, options, ..Default::default() }],
     };
     let t2 = templates::update(&mut conn, t.id, &edited).unwrap();
@@ -90,6 +92,7 @@ fn creating_a_template_makes_its_chip_and_editing_keeps_line_ids() {
         name: "x".into(),
         item_type: "side".into(),
         colour: None,
+        category_id: None,
         lines: vec![LineInput { id: Some(999_999), label: "Veg".into(), ..Default::default() }],
     };
     assert!(templates::update(&mut conn, t.id, &bad).is_err());
@@ -108,6 +111,7 @@ fn the_chip_cannot_be_edited_as_a_plain_item() {
             colour: None,
             notes: None,
             template_id: None,
+            category_id: None,
             lines: vec![],
         },
     )
@@ -172,7 +176,7 @@ fn picks_are_snapshots_so_template_edits_do_not_change_planned_nights() {
     plan::set_picks(&conn, e.id, &[pick(&conn, line, "Potato")]).unwrap();
 
     // The template now suggests 900 g of potato and drops the slot entirely.
-    let edited = TemplateInput { name: "Steamed veggies".into(), item_type: "side".into(), colour: None, lines: vec![] };
+    let edited = TemplateInput { name: "Steamed veggies".into(), item_type: "side".into(), colour: None, category_id: None, lines: vec![] };
     templates::update(&mut conn, t.id, &edited).unwrap();
 
     let back = plan::list(&conn, "2026-10-06", "2026-10-06").unwrap();
@@ -290,7 +294,8 @@ fn sweet_savory_items_default_to_the_snack_slot() {
             colour: None,
             notes: None,
             template_id: None,
-            lines: vec![super::items::LineInput { ingredient_id: butter, quantity: 125.0, group_by: false }],
+            category_id: None,
+            lines: vec![super::items::LineInput { ingredient_id: butter, quantity: 125.0 }],
         },
     )
     .unwrap();
@@ -577,65 +582,145 @@ fn real_backup_imports_and_works() {
     );
 }
 
-// ---- grouping dishes by a ticked ingredient --------------------------------------------------
+// ---- dish categories (Beef, Chicken, Soups...) -----------------------------------------------
 
-fn dish_with_ticks(conn: &mut Connection, name: &str, ticked: &[&str], others: &[&str]) -> super::items::Item {
-    let line = |n: &str, tick: bool| super::items::LineInput { ingredient_id: ing(conn, n), quantity: 1.0, group_by: tick };
-    let mut lines: Vec<_> = ticked.iter().map(|n| line(n, true)).collect();
-    lines.extend(others.iter().map(|n| line(n, false)));
+use super::dish_categories as cats;
+
+fn cat(conn: &Connection, name: &str) -> i64 {
+    conn.query_row("SELECT id FROM item_category WHERE name = ?1", params![name], |r| r.get(0)).unwrap()
+}
+
+fn dish_in(conn: &mut Connection, name: &str, category: Option<i64>) -> super::items::Item {
+    let flour = ing(conn, "Butter");
     super::items::create(
         conn,
-        &super::items::ItemInput { name: name.into(), item_type: "meal".into(), colour: None, notes: None, template_id: None, lines },
+        &super::items::ItemInput {
+            name: name.into(),
+            item_type: "meal".into(),
+            colour: None,
+            notes: None,
+            template_id: None,
+            category_id: category,
+            lines: vec![super::items::LineInput { ingredient_id: flour, quantity: 1.0 }],
+        },
     )
     .unwrap()
 }
 
 #[test]
-fn only_hand_ticked_ingredients_group_a_dish() {
+fn a_fresh_library_starts_with_the_usual_categories_and_nothing_is_filed() {
+    let conn = test_conn();
+    let names: Vec<String> = cats::list(&conn).unwrap().into_iter().map(|c| c.name).collect();
+    assert_eq!(names, ["Beef", "Chicken", "Lamb", "Pork", "Seafood", "Vegetarian"]);
+    assert!(super::items::list(&conn, None, None, true).unwrap().iter().all(|i| i.category_id.is_none()));
+}
+
+#[test]
+fn a_dish_is_filed_by_choice_and_the_list_shows_the_category_name() {
     let mut conn = test_conn();
-    // Beef is ticked; bacon is in the recipe but is not what the dish is "about".
-    let rissoles = dish_with_ticks(&mut conn, "Beef rissoles", &["Beef mince"], &["Bacon", "Onion"]);
-    let carbonara = dish_with_ticks(&mut conn, "Carbonara", &[], &["Bacon", "Spaghetti"]);
-
-    assert_eq!(rissoles.lines.iter().filter(|l| l.group_by).count(), 1);
+    let beef = cat(&conn, "Beef");
+    let rissoles = dish_in(&mut conn, "Beef rissoles", Some(beef));
+    let carbonara = dish_in(&mut conn, "Carbonara", None);
+    assert_eq!(rissoles.category_id, Some(beef));
     let all = super::items::list(&conn, None, None, false).unwrap();
-    let tags = |id: i64| all.iter().find(|i| i.id == id).unwrap().groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>();
-    assert_eq!(tags(rissoles.id), ["Beef mince"]);
-    assert!(tags(carbonara.id).is_empty(), "nothing is grouped automatically");
-    // Untouched items (and the sample data) stay ungrouped.
-    assert!(all.iter().filter(|i| !i.groups.is_empty()).count() == 1);
+    let find = |id: i64| all.iter().find(|i| i.id == id).unwrap();
+    assert_eq!(find(rissoles.id).category_name.as_deref(), Some("Beef"));
+    assert_eq!(find(carbonara.id).category_id, None, "nothing is categorised automatically");
+    assert_eq!(cats::list(&conn).unwrap().iter().find(|c| c.name == "Beef").unwrap().item_count, 1);
 
-    // Editing replaces the ticks; duplicating keeps them.
+    // Duplicating keeps the category; editing can clear it.
     let copy = super::items::duplicate(&mut conn, rissoles.id).unwrap();
-    assert!(copy.lines.iter().any(|l| l.group_by && l.ingredient_name == "Beef mince"));
-    let line = |n: &str, tick: bool| super::items::LineInput { ingredient_id: ing(&conn, n), quantity: 1.0, group_by: tick };
-    let edited = super::items::ItemInput {
+    assert_eq!(copy.category_id, Some(beef));
+    let mut input = super::items::ItemInput {
         name: "Beef rissoles".into(),
         item_type: "meal".into(),
         colour: None,
         notes: None,
         template_id: None,
-        lines: vec![line("Beef mince", false), line("Onion", true)],
+        category_id: None,
+        lines: vec![],
     };
-    let updated = super::items::update(&mut conn, rissoles.id, &edited).unwrap();
-    assert_eq!(updated.lines.iter().filter(|l| l.group_by).map(|l| l.ingredient_name.as_str()).collect::<Vec<_>>(), ["Onion"]);
+    input.lines.push(super::items::LineInput { ingredient_id: ing(&conn, "Butter"), quantity: 1.0 });
+    assert_eq!(super::items::update(&mut conn, rissoles.id, &input).unwrap().category_id, None);
 }
 
 #[test]
-fn ticks_survive_a_backup_and_old_backups_import_with_none() {
+fn categories_can_be_added_renamed_and_deleted_without_losing_dishes() {
+    let mut conn = test_conn();
+    let soups = cats::create(&conn, "  Soups ").unwrap();
+    assert_eq!(soups.name, "Soups");
+    assert!(cats::create(&conn, "soups").is_err(), "names are unique ignoring case");
+    assert!(cats::create(&conn, "  ").is_err());
+    let dish = dish_in(&mut conn, "Pumpkin soup", Some(soups.id));
+
+    cats::rename(&conn, soups.id, "Soups & stews").unwrap();
+    assert_eq!(super::items::list(&conn, None, None, false).unwrap().iter().find(|i| i.id == dish.id).unwrap().category_name.as_deref(), Some("Soups & stews"));
+    assert!(cats::rename(&conn, soups.id, "beef").is_err());
+    assert!(cats::rename(&conn, 9999, "x").is_err());
+
+    cats::delete(&conn, soups.id).unwrap();
+    assert_eq!(super::items::get(&conn, dish.id).unwrap().category_id, None, "dish stays, just uncategorised");
+    assert!(cats::delete(&conn, soups.id).is_err());
+}
+
+#[test]
+fn a_templates_chip_follows_its_category() {
+    let mut conn = test_conn();
+    let soups = cats::create(&conn, "Soups").unwrap();
+    let t = steamed_veg(&mut conn);
+    let input = TemplateInput {
+        name: "Veg soup".into(),
+        item_type: "meal".into(),
+        colour: None,
+        category_id: Some(soups.id),
+        lines: vec![],
+    };
+    let t = templates::update(&mut conn, t.id, &input).unwrap();
+    assert_eq!(t.category_id, Some(soups.id));
+    assert_eq!(super::items::get(&conn, t.item_id.unwrap()).unwrap().category_id, Some(soups.id));
+    cats::delete(&conn, soups.id).unwrap();
+    assert_eq!(templates::get(&conn, t.id).unwrap().category_id, None);
+}
+
+#[test]
+fn categories_and_filing_survive_a_backup_and_older_backups_get_the_starting_list() {
     let mut source = test_conn();
-    dish_with_ticks(&mut source, "Beef rissoles", &["Beef mince"], &["Onion"]);
+    let soups = cats::create(&source, "Soups").unwrap();
+    cats::delete(&source, cat(&source, "Lamb")).unwrap();
+    dish_in(&mut source, "Pumpkin soup", Some(soups.id));
     let json = backup::export_json(&source).unwrap();
+
     let target = test_conn();
     backup::import_json(&target, &json).unwrap();
-    assert_eq!(count(&target, "SELECT COUNT(*) FROM item_ingredient WHERE group_by = 1"), 1);
+    let names: Vec<String> = cats::list(&target).unwrap().into_iter().map(|c| c.name).collect();
+    assert!(names.contains(&"Soups".to_string()) && !names.contains(&"Lamb".to_string()), "{names:?}");
+    let dish = super::items::list(&target, None, Some("Pumpkin"), false).unwrap();
+    assert_eq!(dish[0].category_name.as_deref(), Some("Soups"));
 
-    // A backup written before grouping existed has no such field anywhere.
+    // A backup from before categories existed has none of it: the starting list comes back.
     let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    for l in v["item_ingredients"].as_array_mut().unwrap() {
-        l.as_object_mut().unwrap().remove("group_by");
+    let o = v.as_object_mut().unwrap();
+    o.remove("item_categories");
+    for i in o["items"].as_array_mut().unwrap() {
+        i.as_object_mut().unwrap().remove("category_id");
+    }
+    for t in o["templates"].as_array_mut().unwrap() {
+        t.as_object_mut().unwrap().remove("category_id");
     }
     let older = test_conn();
+    cats::delete(&older, cat(&older, "Beef")).unwrap();
     backup::import_json(&older, &v.to_string()).unwrap();
-    assert_eq!(count(&older, "SELECT COUNT(*) FROM item_ingredient WHERE group_by = 1"), 0);
+    assert_eq!(cats::list(&older).unwrap().len(), 6);
+    assert!(super::items::list(&older, None, None, true).unwrap().iter().all(|i| i.category_id.is_none()));
+    assert_eq!(count(&older, "SELECT COUNT(*) FROM pragma_foreign_key_check"), 0);
+}
+
+#[test]
+fn erasing_everything_keeps_your_category_list() {
+    let mut conn = test_conn();
+    cats::create(&conn, "Soups").unwrap();
+    let soups = cat(&conn, "Soups");
+    dish_in(&mut conn, "Pumpkin soup", Some(soups));
+    super::data::erase_all(&conn).unwrap();
+    assert_eq!(cats::list(&conn).unwrap().len(), 7);
 }

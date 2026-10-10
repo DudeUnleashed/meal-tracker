@@ -66,13 +66,17 @@ export interface ItemSummary {
   ingredient_count: number;
   /** Set for a template's chip: edited in Library → Templates. */
   live_template_id: number | null;
-  /** Ingredients ticked "group by" on the recipe: the dish is listed under each of these. */
-  groups: GroupTag[];
+  /** The dish category it is filed under (Beef, Soups…), chosen by hand. */
+  category_id: number | null;
+  category_name: string | null;
 }
 
-export interface GroupTag {
-  ingredient_id: number;
+/** A way to file dishes in the library lists. Not the ingredient categories of the shopping list. */
+export interface DishCategory {
+  id: number;
   name: string;
+  /** Dishes filed under it. */
+  item_count: number;
 }
 
 export interface ItemLine {
@@ -81,8 +85,6 @@ export interface ItemLine {
   unit: Unit;
   /** Per serve for meat items; the fixed amount otherwise. */
   quantity: number;
-  /** Ticked by hand: list the dish under this ingredient in the library. */
-  group_by: boolean;
 }
 
 export interface Item {
@@ -94,6 +96,7 @@ export interface Item {
   template_id: number | null;
   archived: boolean;
   live_template_id: number | null;
+  category_id: number | null;
   lines: ItemLine[];
 }
 
@@ -103,7 +106,8 @@ export interface ItemInput {
   colour: string | null;
   notes: string | null;
   template_id: number | null;
-  lines: { ingredient_id: number; quantity: number; group_by: boolean }[];
+  category_id: number | null;
+  lines: { ingredient_id: number; quantity: number }[];
 }
 
 export interface SummarySource {
@@ -293,6 +297,7 @@ export interface Template {
   colour: string | null;
   /** The chip in the planner's library. */
   item_id: number | null;
+  category_id: number | null;
   lines: TemplateLine[];
 }
 
@@ -300,6 +305,8 @@ export interface TemplateInput {
   name: string;
   item_type: TemplateType;
   colour: string | null;
+  /** Dish category for the template's chip. */
+  category_id: number | null;
   lines: {
     /** Keep the id of an existing line so nights that picked from it stay attached. */
     id?: number;
@@ -330,6 +337,13 @@ export interface ItemDraft {
 }
 
 export const api = {
+  dishCategories: {
+    list: () => invoke<DishCategory[]>("dish_categories_list"),
+    create: (name: string) => invoke<DishCategory>("dish_categories_create", { name }),
+    rename: (id: number, name: string) => invoke<void>("dish_categories_rename", { id, name }),
+    /** Dishes filed under it become uncategorised; none are deleted. */
+    delete: (id: number) => invoke<void>("dish_categories_delete", { id }),
+  },
   categories: {
     list: () => invoke<IngredientCategory[]>("categories_list"),
     /** `ids` = every category id, in the new order (also the order of the shopping summary). */

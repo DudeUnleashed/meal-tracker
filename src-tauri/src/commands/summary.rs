@@ -306,9 +306,10 @@ mod tests {
             colour: None,
             notes: None,
             template_id: None,
+            category_id: None,
             lines: vec![
-                LineInput { ingredient_id: ingredient_id(&conn, "Sausages"), quantity: 1.5, group_by: false },
-                LineInput { ingredient_id: ingredient_id(&conn, "Beef mince"), quantity: 62.5, group_by: false },
+                LineInput { ingredient_id: ingredient_id(&conn, "Sausages"), quantity: 1.5 },
+                LineInput { ingredient_id: ingredient_id(&conn, "Beef mince"), quantity: 62.5 },
             ],
         };
         items::create(&mut conn, &input).unwrap();
@@ -329,7 +330,8 @@ mod tests {
             colour: None,
             notes: None,
             template_id: None,
-            lines: vec![LineInput { ingredient_id: ingredient_id(&conn, "Carrot"), quantity: 0.1, group_by: false }],
+            category_id: None,
+            lines: vec![LineInput { ingredient_id: ingredient_id(&conn, "Carrot"), quantity: 0.1 }],
         };
         items::create(&mut conn, &input).unwrap();
         plan(&conn, "2026-10-06", "Tenths", Some(30)); // 0.1 * 30 = 3.0000000000000004
@@ -398,10 +400,11 @@ mod tests {
             colour: edit.colour,
             notes: edit.notes,
             template_id: edit.template_id,
+            category_id: edit.category_id,
             lines: edit
                 .lines
                 .iter()
-                .map(|l| LineInput { ingredient_id: l.ingredient_id, quantity: l.quantity, group_by: l.group_by })
+                .map(|l| LineInput { ingredient_id: l.ingredient_id, quantity: l.quantity })
                 .collect(),
         };
         items::update(&mut conn, bol, &input).unwrap();

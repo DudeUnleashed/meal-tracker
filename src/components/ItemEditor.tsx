@@ -7,6 +7,7 @@ import {
   ITEM_TYPES,
   typeLabel,
   type HistoryEntry,
+  type DishCategory,
   type Ingredient,
   type IngredientCategory,
   type Item,
@@ -23,8 +24,6 @@ interface Line {
   key: number;
   ingredient_id: number | null;
   quantity: string;
-  /** Ticked: list this dish under the ingredient in the library. */
-  group_by: boolean;
 }
 
 interface Draft {
@@ -33,6 +32,7 @@ interface Draft {
   colour: string | null;
   notes: string;
   template_id: number | null;
+  category_id: number | null;
   lines: Line[];
 }
 
@@ -66,11 +66,11 @@ function toDraft(item: Item): Draft {
     colour: item.colour,
     notes: item.notes ?? "",
     template_id: item.template_id,
+    category_id: item.category_id,
     lines: item.lines.map((l) => ({
       key: nextKey++,
       ingredient_id: l.ingredient_id,
       quantity: String(l.quantity),
-      group_by: l.group_by,
     })),
   };
 }
@@ -82,7 +82,8 @@ function blankDraft(type: ItemType): Draft {
     colour: DEFAULT_COLOURS[type],
     notes: "",
     template_id: null,
-    lines: [{ key: nextKey++, ingredient_id: null, quantity: "", group_by: false }],
+    category_id: null,
+    lines: [{ key: nextKey++, ingredient_id: null, quantity: "" }],
   };
 }
 
@@ -136,6 +137,12 @@ export default function ItemEditor({
     };
   }, [itemId]);
 
+  // The categories you can file a dish under (Beef, Soups…); edited in Settings.
+  const [dishCategories, setDishCategories] = useState<DishCategory[]>([]);
+  useEffect(() => {
+    api.dishCategories.list().then(setDishCategories).catch(() => setDishCategories([]));
+  }, []);
+
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   useEffect(() => {
     if (itemId === null) return;
@@ -182,7 +189,6 @@ export default function ItemEditor({
         key: nextKey++,
         ingredient_id: l.ingredient_id,
         quantity: l.quantity === null ? "" : String(l.quantity),
-        group_by: false,
       })),
     });
     setFromTemplate(templateName);
@@ -195,7 +201,7 @@ export default function ItemEditor({
       setError("Give the item a name");
       return null;
     }
-    const lines: { ingredient_id: number; quantity: number; group_by: boolean }[] = [];
+    const lines: { ingredient_id: number; quantity: number }[] = [];
     for (const l of draft.lines) {
       if (l.ingredient_id === null && l.quantity.trim() === "") continue; // untouched blank row
       if (l.ingredient_id === null) {
@@ -208,7 +214,7 @@ export default function ItemEditor({
         setError(`${name}: ${parsed.error}`);
         return null;
       }
-      lines.push({ ingredient_id: l.ingredient_id, quantity: parsed.value, group_by: l.group_by });
+      lines.push({ ingredient_id: l.ingredient_id, quantity: parsed.value });
     }
     return {
       name: draft.name,
@@ -217,6 +223,7 @@ export default function ItemEditor({
       notes: draft.notes.trim() === "" ? null : draft.notes,
       // Templates are for meals only; drop the link if the type was changed afterwards.
       template_id: draft.type === "meal" ? draft.template_id : null,
+      category_id: draft.category_id,
       lines,
     };
   }
@@ -305,6 +312,22 @@ export default function ItemEditor({
             </select>
           </label>
           <label className="text-xs text-slate-500">
+            Category
+            <select
+              value={draft.category_id ?? ""}
+              onChange={(e) => update({ category_id: e.target.value === "" ? null : Number(e.target.value) })}
+              className={`${field} text-slate-900`}
+              title="Files this dish under a heading in the lists. Edit the choices in Settings."
+            >
+              <option value="">None</option>
+              {dishCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-500">
             Colour
             <div className="flex items-center gap-1">
               <input
@@ -374,7 +397,6 @@ export default function ItemEditor({
               {isMeat
                 ? "Quantities are per portion — you choose how many portions each night on the calendar"
                 : "Quantities are the fixed amount you cook"}
-              {" · "}Tick <b>Group</b> on the main ingredient to file this dish under it in the lists
             </span>
           </div>
 
@@ -399,18 +421,7 @@ export default function ItemEditor({
                     {unitOf(line.ingredient_id)}
                     {isMeat && unitOf(line.ingredient_id) ? " / portion" : ""}
                   </span>
-                  <label
-                    title="Tick to list this dish under this ingredient in the library (e.g. tick Beef mince on Beef rissoles)"
-                    className="flex items-center gap-1 text-xs text-slate-500"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={line.group_by}
-                      disabled={line.ingredient_id === null}
-                      onChange={(e) => updateLine(line.key, { group_by: e.target.checked })}
-                    />
-                    Group
-                  </label>
+
                   <button
                     type="button"
                     onClick={() => moveLine(index, -1)}
@@ -459,7 +470,7 @@ export default function ItemEditor({
           <button
             type="button"
             onClick={() =>
-              update({ lines: [...draft.lines, { key: nextKey++, ingredient_id: null, quantity: "", group_by: false }] })
+              update({ lines: [...draft.lines, { key: nextKey++, ingredient_id: null, quantity: "" }] })
             }
             className="mt-2 text-sm font-medium text-emerald-700 hover:underline"
           >

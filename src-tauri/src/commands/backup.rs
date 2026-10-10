@@ -45,6 +45,14 @@ struct TemplateRow {
     /// The template's chip. Absent in version 1 backups; restored by `ensure_items`.
     #[serde(default)]
     item_id: Option<i64>,
+    #[serde(default)]
+    category_id: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct ItemCategoryRow {
+    id: i64,
+    name: String,
 }
 
 fn meal() -> String {
@@ -96,6 +104,8 @@ struct ItemRow {
     archived: bool,
     #[serde(default)]
     sample: bool,
+    #[serde(default)]
+    category_id: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -105,9 +115,6 @@ struct ItemIngredientRow {
     ingredient_id: i64,
     quantity: f64,
     position: i64,
-    /// Absent in backups made before dishes could be grouped by an ingredient.
-    #[serde(default)]
-    group_by: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -155,6 +162,9 @@ struct Backup {
     exported_at: String,
     categories: Vec<CategoryRow>,
     ingredients: Vec<IngredientRow>,
+    /// Absent in backups made before dish categories; the starting list is then restored.
+    #[serde(default)]
+    item_categories: Option<Vec<ItemCategoryRow>>,
     templates: Vec<TemplateRow>,
     template_lines: Vec<TemplateLineRow>,
     #[serde(default)]
@@ -210,7 +220,10 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                 sample: r.get::<_, i64>(5)? != 0,
             })
         })?,
-        templates: rows(conn, "SELECT id, name, sample, item_type, colour, item_id FROM template ORDER BY id", |r| {
+        item_categories: Some(rows(conn, "SELECT id, name FROM item_category ORDER BY id", |r| {
+            Ok(ItemCategoryRow { id: r.get(0)?, name: r.get(1)? })
+        })?),
+        templates: rows(conn, "SELECT id, name, sample, item_type, colour, item_id, category_id FROM template ORDER BY id", |r| {
             Ok(TemplateRow {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -218,6 +231,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                 item_type: r.get(3)?,
                 colour: r.get(4)?,
                 item_id: r.get(5)?,
+                category_id: r.get(6)?,
             })
         })?,
         template_options: rows(
@@ -267,7 +281,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
         )?,
         items: rows(
             conn,
-            "SELECT id, name, type, colour, notes, template_id, archived, sample FROM item ORDER BY id",
+            "SELECT id, name, type, colour, notes, template_id, archived, sample, category_id FROM item ORDER BY id",
             |r| {
                 Ok(ItemRow {
                     id: r.get(0)?,
@@ -278,12 +292,13 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                     template_id: r.get(5)?,
                     archived: r.get::<_, i64>(6)? != 0,
                     sample: r.get::<_, i64>(7)? != 0,
+                    category_id: r.get(8)?,
                 })
             },
         )?,
         item_ingredients: rows(
             conn,
-            "SELECT id, item_id, ingredient_id, quantity, position, group_by FROM item_ingredient ORDER BY id",
+            "SELECT id, item_id, ingredient_id, quantity, position FROM item_ingredient ORDER BY id",
             |r| {
                 Ok(ItemIngredientRow {
                     id: r.get(0)?,
@@ -291,7 +306,6 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                     ingredient_id: r.get(2)?,
                     quantity: r.get(3)?,
                     position: r.get(4)?,
-                    group_by: r.get::<_, i64>(5)? != 0,
                 })
             },
         )?,
@@ -351,6 +365,7 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
         "template_line",
         "item",
         "template",
+        "item_category",
         "ingredient",
         "ingredient_category",
         "setting",
@@ -374,10 +389,14 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
         )
         .map_err(|e| err("ingredients", e))?;
     }
+    for c in b.item_categories.iter().flatten() {
+        tx.execute("INSERT INTO item_category (id, name) VALUES (?1, ?2)", params![c.id, c.name])
+            .map_err(|e| err("dish categories", e))?;
+    }
     for t in &b.templates {
         tx.execute(
-            "INSERT INTO template (id, name, sample, item_type, colour) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![t.id, t.name, t.sample, t.item_type, t.colour],
+            "INSERT INTO template (id, name, sample, item_type, colour, category_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![t.id, t.name, t.sample, t.item_type, t.colour, t.category_id],
         )
         .map_err(|e| err("templates", e))?;
     }
@@ -400,9 +419,9 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for i in &b.items {
         tx.execute(
-            "INSERT INTO item (id, name, type, colour, notes, template_id, archived, sample)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![i.id, i.name, i.item_type, i.colour, i.notes, i.template_id, i.archived, i.sample],
+            "INSERT INTO item (id, name, type, colour, notes, template_id, archived, sample, category_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![i.id, i.name, i.item_type, i.colour, i.notes, i.template_id, i.archived, i.sample, i.category_id],
         )
         .map_err(|e| err("items", e))?;
     }
@@ -414,9 +433,9 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for l in &b.item_ingredients {
         tx.execute(
-            "INSERT INTO item_ingredient (id, item_id, ingredient_id, quantity, position, group_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![l.id, l.item_id, l.ingredient_id, l.quantity, l.position, l.group_by],
+            "INSERT INTO item_ingredient (id, item_id, ingredient_id, quantity, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![l.id, l.item_id, l.ingredient_id, l.quantity, l.position],
         )
         .map_err(|e| err("item ingredients", e))?;
     }
@@ -450,6 +469,9 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     // Backups from before live templates have no chips, and none of the newer shopping
     // categories; bring those up to date so a restored library behaves like a current one.
     super::categories::ensure_defaults(&tx)?;
+    if b.item_categories.is_none() {
+        super::dish_categories::ensure_defaults(&tx)?;
+    }
     super::templates::ensure_items(&tx)?;
 
     // Foreign keys are checked per statement above, but be explicit that nothing dangles.

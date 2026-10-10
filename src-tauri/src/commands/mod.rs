@@ -2,6 +2,7 @@ pub mod backup;
 pub mod categories;
 pub mod data;
 pub mod dayinfo;
+pub mod dish_categories;
 pub mod ingredients;
 pub mod items;
 pub mod plan;

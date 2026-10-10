@@ -21,7 +21,7 @@ function loadOpen(key: string): number[] {
   }
 }
 
-/** Items under collapsible ingredient headings (ticked by hand on the recipe), then the rest. */
+/** Items under collapsible category headings (Beef, Soups… chosen by hand), then the rest. */
 export default function GroupedItems({ items, grouped, storageKey, renderItem }: Props) {
   const [open, setOpen] = useState<number[]>(() => loadOpen(storageKey));
 
@@ -41,12 +41,12 @@ export default function GroupedItems({ items, grouped, storageKey, renderItem }:
   return (
     <>
       {groups.map((g) => {
-        const isOpen = open.includes(g.ingredient_id);
+        const isOpen = open.includes(g.category_id);
         return (
-          <li key={`group:${g.ingredient_id}`} className="list-none">
+          <li key={`group:${g.category_id}`} className="list-none">
             <button
               type="button"
-              onClick={() => toggle(g.ingredient_id)}
+              onClick={() => toggle(g.category_id)}
               aria-expanded={isOpen}
               className="flex w-full items-center gap-1.5 rounded bg-slate-100 px-2 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-200"
             >
@@ -56,7 +56,7 @@ export default function GroupedItems({ items, grouped, storageKey, renderItem }:
             </button>
             {isOpen && (
               <ul className="mt-1.5 space-y-1.5 border-l-2 border-slate-200 pl-2">
-                {g.items.map((i) => renderItem(i, `g${g.ingredient_id}`))}
+                {g.items.map((i) => renderItem(i, `g${g.category_id}`))}
               </ul>
             )}
           </li>

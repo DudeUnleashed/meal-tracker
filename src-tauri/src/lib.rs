@@ -15,6 +15,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::dish_categories::dish_categories_list,
+            commands::dish_categories::dish_categories_create,
+            commands::dish_categories::dish_categories_rename,
+            commands::dish_categories::dish_categories_delete,
             commands::categories::categories_list,
             commands::categories::categories_reorder,
             commands::backup::backup_export,

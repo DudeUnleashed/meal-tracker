@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { useEffect, useState } from "react";
 import { api, errorMessage, type IngredientCategory } from "../../lib/api";
 import DataSection from "./DataSection";
+import DishCategoriesSection from "./DishCategoriesSection";
 
 const DAYS = [
   { value: "1", label: "Monday" },
@@ -153,6 +154,8 @@ export default function SettingsTab() {
             </label>
           </div>
         </section>
+
+        <DishCategoriesSection className={card} />
 
         <section className={card}>
           <h2 className="font-semibold">Shopping list order</h2>

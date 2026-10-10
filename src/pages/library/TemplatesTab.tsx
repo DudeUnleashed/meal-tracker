@@ -8,6 +8,7 @@ import {
   errorMessage,
   UNITS,
   type Ingredient,
+  type DishCategory,
   type IngredientCategory,
   type Template,
   type TemplateSummary,
@@ -147,6 +148,7 @@ interface Draft {
   name: string;
   item_type: TemplateType;
   colour: string | null;
+  category_id: number | null;
   lines: Line[];
 }
 
@@ -169,6 +171,7 @@ function toDraft(t: Template): Draft {
     name: t.name,
     item_type: t.item_type,
     colour: t.colour,
+    category_id: t.category_id,
     lines: t.lines.map((l) => ({
       key: nextKey++,
       id: l.id,
@@ -216,11 +219,15 @@ function TemplateEditor({
   onSaved,
   onDeleted,
 }: EditorProps) {
-  const fresh: Draft = { name: "", item_type: "meal", colour: null, lines: [blankLine("slot")] };
+  const fresh: Draft = { name: "", item_type: "meal", colour: null, category_id: null, lines: [blankLine("slot")] };
   const [draft, setDraft] = useState<Draft | null>(templateId === null ? fresh : null);
   const [saved, setSaved] = useState(templateId === null ? snapshot(fresh) : "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dishCategories, setDishCategories] = useState<DishCategory[]>([]);
+  useEffect(() => {
+    api.dishCategories.list().then(setDishCategories).catch(() => setDishCategories([]));
+  }, []);
   // The line (and, for a choice, which option) that is creating a new ingredient.
   const [creating, setCreating] = useState<{ key: number; optKey?: number; name: string } | null>(null);
 
@@ -334,7 +341,7 @@ function TemplateEditor({
         });
       }
     }
-    return { name: draft.name, item_type: draft.item_type, colour: draft.colour, lines };
+    return { name: draft.name, item_type: draft.item_type, colour: draft.colour, category_id: draft.category_id, lines };
   }
 
   async function save() {
@@ -397,6 +404,21 @@ function TemplateEditor({
               {TEMPLATE_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {typeLabel(t)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-500">
+            Category
+            <select
+              value={draft.category_id ?? ""}
+              onChange={(e) => update({ category_id: e.target.value === "" ? null : Number(e.target.value) })}
+              className={`${field} block text-slate-900`}
+            >
+              <option value="">None</option>
+              {dishCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
                 </option>
               ))}
             </select>
