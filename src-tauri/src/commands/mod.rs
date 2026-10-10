@@ -10,3 +10,5 @@ pub mod summary;
 pub mod templates;
 pub mod undo;
 pub mod usage;
+#[cfg(test)]
+mod live_tests;

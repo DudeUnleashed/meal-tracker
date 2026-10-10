@@ -16,6 +16,16 @@ struct PlanRow {
     note: Option<String>,
     position: i64,
     scale: f64,
+    slot: String,
+    label: Option<String>,
+}
+
+struct PickRow {
+    entry_id: i64,
+    line_id: Option<i64>,
+    ingredient_id: i64,
+    quantity: f64,
+    position: i64,
 }
 
 struct DayRow {
@@ -29,6 +39,7 @@ struct DayRow {
 struct Snapshot {
     label: String,
     plan: Vec<PlanRow>,
+    picks: Vec<PickRow>,
     days: Vec<DayRow>,
 }
 
@@ -37,7 +48,7 @@ pub struct UndoStack(Mutex<Vec<Snapshot>>);
 
 fn take_snapshot(conn: &Connection, label: String) -> Result<Snapshot, String> {
     let mut stmt = conn
-        .prepare("SELECT id, date, item_id, serves, note, position, scale FROM plan_entry ORDER BY id")
+        .prepare("SELECT id, date, item_id, serves, note, position, scale, slot, label FROM plan_entry ORDER BY id")
         .map_err(|e| e.to_string())?;
     let plan = stmt
         .query_map([], |r| {
@@ -49,6 +60,24 @@ fn take_snapshot(conn: &Connection, label: String) -> Result<Snapshot, String> {
                 note: r.get(4)?,
                 position: r.get(5)?,
                 scale: r.get(6)?,
+                slot: r.get(7)?,
+                label: r.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT entry_id, line_id, ingredient_id, quantity, position FROM plan_entry_pick ORDER BY id")
+        .map_err(|e| e.to_string())?;
+    let picks = stmt
+        .query_map([], |r| {
+            Ok(PickRow {
+                entry_id: r.get(0)?,
+                line_id: r.get(1)?,
+                ingredient_id: r.get(2)?,
+                quantity: r.get(3)?,
+                position: r.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -64,7 +93,7 @@ fn take_snapshot(conn: &Connection, label: String) -> Result<Snapshot, String> {
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    Ok(Snapshot { label, plan, days })
+    Ok(Snapshot { label, plan, picks, days })
 }
 
 fn restore(conn: &Connection, s: &Snapshot) -> Result<(), String> {
@@ -73,9 +102,18 @@ fn restore(conn: &Connection, s: &Snapshot) -> Result<(), String> {
     tx.execute("DELETE FROM day_info", []).map_err(|e| e.to_string())?;
     for p in &s.plan {
         tx.execute(
-            "INSERT INTO plan_entry (id, date, item_id, serves, note, position, scale)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![p.id, p.date, p.item_id, p.serves, p.note, p.position, p.scale],
+            "INSERT INTO plan_entry (id, date, item_id, serves, note, position, scale, slot, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![p.id, p.date, p.item_id, p.serves, p.note, p.position, p.scale, p.slot, p.label],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    for k in &s.picks {
+        // The template slot may have been deleted since; the pick then just loses its slot.
+        tx.execute(
+            "INSERT INTO plan_entry_pick (entry_id, line_id, ingredient_id, quantity, position)
+             VALUES (?1, (SELECT id FROM template_line WHERE id = ?2), ?3, ?4, ?5)",
+            params![k.entry_id, k.line_id, k.ingredient_id, k.quantity, k.position],
         )
         .map_err(|e| e.to_string())?;
     }

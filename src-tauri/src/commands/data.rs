@@ -71,14 +71,18 @@ pub fn remove_sample(conn: &Connection) -> Result<Removed, String> {
 
     let plan_entries =
         run("DELETE FROM plan_entry WHERE item_id IN (SELECT id FROM item WHERE sample = 1)")?;
-    // Lines go with their item / template (ON DELETE CASCADE).
-    let items = run("DELETE FROM item WHERE sample = 1")?;
+    // Sample templates and their chips go together. The chip is an item, so it is counted with
+    // the items; the template must be deleted first because it points at the chip.
     run("UPDATE item SET template_id = NULL WHERE template_id IN (SELECT id FROM template WHERE sample = 1)")?;
     let templates = run("DELETE FROM template WHERE sample = 1")?;
+    // Lines go with their item / template (ON DELETE CASCADE).
+    let items = run("DELETE FROM item WHERE sample = 1")?;
     let ingredients = run(
         "DELETE FROM ingredient WHERE sample = 1
            AND id NOT IN (SELECT ingredient_id FROM item_ingredient)
-           AND id NOT IN (SELECT ingredient_id FROM template_line WHERE ingredient_id IS NOT NULL)",
+           AND id NOT IN (SELECT ingredient_id FROM template_line WHERE ingredient_id IS NOT NULL)
+           AND id NOT IN (SELECT ingredient_id FROM template_option)
+           AND id NOT IN (SELECT ingredient_id FROM plan_entry_pick)",
     )?;
     // What's left is in use by the user's own things: it's theirs now.
     let ingredients_kept = run("UPDATE ingredient SET sample = 0 WHERE sample = 1")?;
@@ -98,11 +102,16 @@ pub fn erase_all(conn: &Connection) -> Result<Erased, String> {
         plan_entries: count(&tx, "SELECT COUNT(*) FROM plan_entry")?,
         day_notes: count(&tx, "SELECT COUNT(*) FROM day_info")?,
     };
+    // Templates and items point at each other (chip / "started from"); cut those links first.
+    tx.execute("UPDATE template SET item_id = NULL", []).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE item SET template_id = NULL", []).map_err(|e| e.to_string())?;
     // Children before parents so foreign keys hold.
     for table in [
+        "plan_entry_pick",
         "plan_entry",
         "day_info",
         "item_ingredient",
+        "template_option",
         "template_line",
         "item",
         "template",
@@ -169,9 +178,9 @@ mod tests {
     fn seed_data_is_flagged_as_sample() {
         let conn = test_conn();
         let c = sample_counts(&conn).unwrap();
-        assert_eq!((c.items, c.ingredients, c.templates, c.planned_entries), (8, 34, 2, 0));
+        assert_eq!((c.items, c.ingredients, c.templates, c.planned_entries), (10, 34, 2, 0));
         // Everything seeded is sample, so counts match the totals.
-        assert_eq!((total(&conn, "item"), total(&conn, "ingredient"), total(&conn, "template")), (8, 34, 2));
+        assert_eq!((total(&conn, "item"), total(&conn, "ingredient"), total(&conn, "template")), (10, 34, 2));
     }
 
     #[test]
@@ -201,7 +210,7 @@ mod tests {
 
         assert_eq!(sample_counts(&conn).unwrap().planned_entries, 2);
         let r = remove_sample(&conn).unwrap();
-        assert_eq!((r.items, r.templates, r.plan_entries), (8, 2, 2));
+        assert_eq!((r.items, r.templates, r.plan_entries), (10, 2, 2));
         assert_eq!(r.ingredients_kept, 1, "Beef mince is used by Nan's pie");
         assert_eq!(r.ingredients, 33);
 
@@ -223,12 +232,13 @@ mod tests {
         let mut conn = test_conn();
         let input = templates::TemplateInput {
             name: "Mine".into(),
+            item_type: "meal".into(),
+            colour: None,
             lines: vec![templates::LineInput {
                 label: "Rice".into(),
                 ingredient_id: Some(id(&conn, "ingredient", "Arborio rice")),
-                category_id: None,
                 quantity: Some(200.0),
-                unit_hint: None,
+                ..Default::default()
             }],
         };
         templates::create(&mut conn, &input).unwrap();
@@ -245,11 +255,11 @@ mod tests {
         crate::commands::dayinfo::set(&conn, "2026-10-06", Some("note"), Some(true)).unwrap();
 
         let e = erase_all(&conn).unwrap();
-        assert_eq!((e.items, e.ingredients, e.templates, e.plan_entries, e.day_notes), (8, 34, 2, 1, 1));
+        assert_eq!((e.items, e.ingredients, e.templates, e.plan_entries, e.day_notes), (10, 34, 2, 1, 1));
         for t in ["item", "item_ingredient", "ingredient", "template", "template_line", "plan_entry", "day_info"] {
             assert_eq!(total(&conn, t), 0, "{t}");
         }
-        assert_eq!(total(&conn, "ingredient_category"), 7);
+        assert_eq!(total(&conn, "ingredient_category"), 9);
         assert_eq!(total(&conn, "setting"), 2);
     }
 }

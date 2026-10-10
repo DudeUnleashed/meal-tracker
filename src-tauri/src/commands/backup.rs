@@ -7,8 +7,10 @@ use tauri::State;
 use super::settings;
 use crate::db::Db;
 
-/// Bump when the backup layout changes in a way old files can't be read.
-const VERSION: u32 = 1;
+/// Written into new backups. Version 1 files (before slots, live templates and the takeaway
+/// token) still import: the missing fields default, and `import_json` fills in the rest.
+const VERSION: u32 = 2;
+const OLDEST_READABLE: u32 = 1;
 
 // One struct per table, keeping original ids so every reference survives a restore.
 
@@ -36,6 +38,36 @@ struct TemplateRow {
     name: String,
     #[serde(default)]
     sample: bool,
+    #[serde(default = "meal")]
+    item_type: String,
+    #[serde(default)]
+    colour: Option<String>,
+    /// The template's chip. Absent in version 1 backups; restored by `ensure_items`.
+    #[serde(default)]
+    item_id: Option<i64>,
+}
+
+fn meal() -> String {
+    "meal".into()
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct TemplateOptionRow {
+    id: i64,
+    line_id: i64,
+    ingredient_id: i64,
+    quantity: Option<f64>,
+    position: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct PlanPickRow {
+    id: i64,
+    entry_id: i64,
+    line_id: Option<i64>,
+    ingredient_id: i64,
+    quantity: f64,
+    position: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -48,6 +80,8 @@ struct TemplateLineRow {
     quantity: Option<f64>,
     unit_hint: Option<String>,
     position: i64,
+    #[serde(default)]
+    multi: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -84,6 +118,15 @@ struct PlanEntryRow {
     /// Older backups predate the size multiplier.
     #[serde(default = "one")]
     scale: f64,
+    /// Older backups only had dinners.
+    #[serde(default = "dinner")]
+    slot: String,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+fn dinner() -> String {
+    "dinner".into()
 }
 
 fn one() -> f64 {
@@ -111,9 +154,13 @@ struct Backup {
     ingredients: Vec<IngredientRow>,
     templates: Vec<TemplateRow>,
     template_lines: Vec<TemplateLineRow>,
+    #[serde(default)]
+    template_options: Vec<TemplateOptionRow>,
     items: Vec<ItemRow>,
     item_ingredients: Vec<ItemIngredientRow>,
     plan_entries: Vec<PlanEntryRow>,
+    #[serde(default)]
+    plan_picks: Vec<PlanPickRow>,
     /// Absent in backups made before day notes existed.
     #[serde(default)]
     day_info: Vec<DayInfoRow>,
@@ -160,12 +207,46 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                 sample: r.get::<_, i64>(5)? != 0,
             })
         })?,
-        templates: rows(conn, "SELECT id, name, sample FROM template ORDER BY id", |r| {
-            Ok(TemplateRow { id: r.get(0)?, name: r.get(1)?, sample: r.get::<_, i64>(2)? != 0 })
+        templates: rows(conn, "SELECT id, name, sample, item_type, colour, item_id FROM template ORDER BY id", |r| {
+            Ok(TemplateRow {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                sample: r.get::<_, i64>(2)? != 0,
+                item_type: r.get(3)?,
+                colour: r.get(4)?,
+                item_id: r.get(5)?,
+            })
         })?,
+        template_options: rows(
+            conn,
+            "SELECT id, line_id, ingredient_id, quantity, position FROM template_option ORDER BY id",
+            |r| {
+                Ok(TemplateOptionRow {
+                    id: r.get(0)?,
+                    line_id: r.get(1)?,
+                    ingredient_id: r.get(2)?,
+                    quantity: r.get(3)?,
+                    position: r.get(4)?,
+                })
+            },
+        )?,
+        plan_picks: rows(
+            conn,
+            "SELECT id, entry_id, line_id, ingredient_id, quantity, position FROM plan_entry_pick ORDER BY id",
+            |r| {
+                Ok(PlanPickRow {
+                    id: r.get(0)?,
+                    entry_id: r.get(1)?,
+                    line_id: r.get(2)?,
+                    ingredient_id: r.get(3)?,
+                    quantity: r.get(4)?,
+                    position: r.get(5)?,
+                })
+            },
+        )?,
         template_lines: rows(
             conn,
-            "SELECT id, template_id, label, ingredient_id, category_id, quantity, unit_hint, position
+            "SELECT id, template_id, label, ingredient_id, category_id, quantity, unit_hint, position, multi
              FROM template_line ORDER BY id",
             |r| {
                 Ok(TemplateLineRow {
@@ -177,6 +258,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                     quantity: r.get(5)?,
                     unit_hint: r.get(6)?,
                     position: r.get(7)?,
+                    multi: r.get::<_, i64>(8)? != 0,
                 })
             },
         )?,
@@ -211,7 +293,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
         )?,
         plan_entries: rows(
             conn,
-            "SELECT id, date, item_id, serves, note, position, scale FROM plan_entry ORDER BY id",
+            "SELECT id, date, item_id, serves, note, position, scale, slot, label FROM plan_entry ORDER BY id",
             |r| {
                 Ok(PlanEntryRow {
                     id: r.get(0)?,
@@ -221,6 +303,8 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                     note: r.get(4)?,
                     position: r.get(5)?,
                     scale: r.get(6)?,
+                    slot: r.get(7)?,
+                    label: r.get(8)?,
                 })
             },
         )?,
@@ -242,16 +326,24 @@ pub fn export_json(conn: &Connection) -> Result<String, String> {
 /// invalid (wrong version, bad values, dangling references) nothing is changed.
 pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, String> {
     let b: Backup = serde_json::from_str(json).map_err(|e| format!("Not a valid backup file: {e}"))?;
-    if b.version != VERSION {
-        return Err(format!("Unsupported backup version {} (this app reads version {VERSION})", b.version));
+    if !(OLDEST_READABLE..=VERSION).contains(&b.version) {
+        return Err(format!(
+            "Unsupported backup version {} (this app reads versions {OLDEST_READABLE}-{VERSION})",
+            b.version
+        ));
     }
 
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     // Children before parents so foreign keys hold while clearing.
+    // Templates and items point at each other (chip / "started from"); cut those links first.
+    tx.execute("UPDATE template SET item_id = NULL", []).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE item SET template_id = NULL", []).map_err(|e| e.to_string())?;
     for table in [
+        "plan_entry_pick",
         "plan_entry",
         "day_info",
         "item_ingredient",
+        "template_option",
         "template_line",
         "item",
         "template",
@@ -280,19 +372,27 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for t in &b.templates {
         tx.execute(
-            "INSERT INTO template (id, name, sample) VALUES (?1, ?2, ?3)",
-            params![t.id, t.name, t.sample],
+            "INSERT INTO template (id, name, sample, item_type, colour) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![t.id, t.name, t.sample, t.item_type, t.colour],
         )
         .map_err(|e| err("templates", e))?;
     }
     for l in &b.template_lines {
         tx.execute(
             "INSERT INTO template_line
-               (id, template_id, label, ingredient_id, category_id, quantity, unit_hint, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![l.id, l.template_id, l.label, l.ingredient_id, l.category_id, l.quantity, l.unit_hint, l.position],
+               (id, template_id, label, ingredient_id, category_id, quantity, unit_hint, position, multi)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![l.id, l.template_id, l.label, l.ingredient_id, l.category_id, l.quantity, l.unit_hint, l.position, l.multi],
         )
         .map_err(|e| err("template lines", e))?;
+    }
+    for o in &b.template_options {
+        tx.execute(
+            "INSERT INTO template_option (id, line_id, ingredient_id, quantity, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![o.id, o.line_id, o.ingredient_id, o.quantity, o.position],
+        )
+        .map_err(|e| err("template options", e))?;
     }
     for i in &b.items {
         tx.execute(
@@ -301,6 +401,12 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
             params![i.id, i.name, i.item_type, i.colour, i.notes, i.template_id, i.archived, i.sample],
         )
         .map_err(|e| err("items", e))?;
+    }
+    for t in &b.templates {
+        if let Some(item_id) = t.item_id {
+            tx.execute("UPDATE template SET item_id = ?1 WHERE id = ?2", params![item_id, t.id])
+                .map_err(|e| err("template chips", e))?;
+        }
     }
     for l in &b.item_ingredients {
         tx.execute(
@@ -312,11 +418,19 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for p in &b.plan_entries {
         tx.execute(
-            "INSERT INTO plan_entry (id, date, item_id, serves, note, position, scale)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![p.id, p.date, p.item_id, p.serves, p.note, p.position, p.scale],
+            "INSERT INTO plan_entry (id, date, item_id, serves, note, position, scale, slot, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![p.id, p.date, p.item_id, p.serves, p.note, p.position, p.scale, p.slot, p.label],
         )
         .map_err(|e| err("the plan", e))?;
+    }
+    for k in &b.plan_picks {
+        tx.execute(
+            "INSERT INTO plan_entry_pick (id, entry_id, line_id, ingredient_id, quantity, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![k.id, k.entry_id, k.line_id, k.ingredient_id, k.quantity, k.position],
+        )
+        .map_err(|e| err("what was picked each night", e))?;
     }
     for d in &b.day_info {
         tx.execute(
@@ -328,6 +442,11 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     for s in &b.settings {
         settings::set(&tx, &s.key, &s.value)?;
     }
+
+    // Backups from before live templates have no chips, and none of the newer shopping
+    // categories; bring those up to date so a restored library behaves like a current one.
+    super::categories::ensure_defaults(&tx)?;
+    super::templates::ensure_items(&tx)?;
 
     // Foreign keys are checked per statement above, but be explicit that nothing dangles.
     let dangling: i64 = tx
@@ -413,7 +532,7 @@ mod tests {
         let target = test_conn(); // different data: just the seed
         let summary = import_json(&target, &json).unwrap();
         assert_eq!(summary.plan_entries, 2);
-        assert_eq!(summary.items, 8);
+        assert_eq!(summary.items, 10);
         assert_eq!(comparable(&source), comparable(&target));
     }
 

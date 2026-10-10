@@ -72,14 +72,26 @@ pub fn summary(conn: &Connection, start: &str, end: &str) -> Result<Summary, Str
     let mut stmt = conn
         .prepare(
             "SELECT g.id, g.name, g.unit, c.id, c.name, c.sort_order,
-                    i.id, i.name, i.type, pe.date, pe.serves, ii.quantity, pe.scale
+                    i.id, i.name, i.type, pe.date, pe.serves, ii.quantity, pe.scale,
+                    pe.position, pe.id, 0, ii.position, ii.id
              FROM plan_entry pe
              JOIN item i ON i.id = pe.item_id
              JOIN item_ingredient ii ON ii.item_id = i.id
              JOIN ingredient g ON g.id = ii.ingredient_id
              JOIN ingredient_category c ON c.id = g.category_id
              WHERE pe.date BETWEEN ?1 AND ?2
-             ORDER BY pe.date, pe.position, pe.id, ii.position, ii.id",
+             UNION ALL
+             -- What each template chip picked for its slots on that night.
+             SELECT g.id, g.name, g.unit, c.id, c.name, c.sort_order,
+                    i.id, i.name, i.type, pe.date, pe.serves, k.quantity, pe.scale,
+                    pe.position, pe.id, 1, k.position, k.id
+             FROM plan_entry pe
+             JOIN item i ON i.id = pe.item_id
+             JOIN plan_entry_pick k ON k.entry_id = pe.id
+             JOIN ingredient g ON g.id = k.ingredient_id
+             JOIN ingredient_category c ON c.id = g.category_id
+             WHERE pe.date BETWEEN ?1 AND ?2
+             ORDER BY 10, 14, 15, 16, 17, 18",
         )
         .map_err(|e| e.to_string())?;
 

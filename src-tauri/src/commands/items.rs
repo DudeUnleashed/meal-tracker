@@ -5,7 +5,8 @@ use tauri::State;
 use super::ingredients::friendly;
 use crate::db::Db;
 
-const TYPES: [&str; 3] = ["meal", "meat", "side"];
+// "blank" (the takeaway token) is a system item and is never created or edited by hand.
+const TYPES: [&str; 4] = ["meal", "meat", "side", "sweet"];
 
 #[derive(Serialize, Debug)]
 pub struct ItemSummary {
@@ -16,6 +17,8 @@ pub struct ItemSummary {
     pub colour: Option<String>,
     pub archived: bool,
     pub ingredient_count: i64,
+    /// Set for a template's chip: it is edited in Library → Templates.
+    pub live_template_id: Option<i64>,
 }
 
 #[derive(Serialize, Debug)]
@@ -37,6 +40,8 @@ pub struct Item {
     pub notes: Option<String>,
     pub template_id: Option<i64>,
     pub archived: bool,
+    /// Set for a template's chip: it is edited in Library → Templates.
+    pub live_template_id: Option<i64>,
     pub lines: Vec<ItemLine>,
 }
 
@@ -86,9 +91,11 @@ pub fn list(
     let mut stmt = conn
         .prepare(
             "SELECT i.id, i.name, i.type, i.colour, i.archived,
-                    (SELECT COUNT(*) FROM item_ingredient ii WHERE ii.item_id = i.id)
+                    (SELECT COUNT(*) FROM item_ingredient ii WHERE ii.item_id = i.id),
+                    (SELECT t.id FROM template t WHERE t.item_id = i.id)
              FROM item i
-             WHERE (?1 IS NULL OR i.type = ?1)
+             WHERE i.type != 'blank'
+               AND (?1 IS NULL OR i.type = ?1)
                AND (?2 IS NULL OR i.name LIKE '%' || ?2 || '%')
                AND (?3 OR i.archived = 0)
              ORDER BY i.name COLLATE NOCASE",
@@ -103,6 +110,7 @@ pub fn list(
                 colour: r.get(3)?,
                 archived: r.get::<_, i64>(4)? != 0,
                 ingredient_count: r.get(5)?,
+                live_template_id: r.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -114,7 +122,9 @@ pub fn list(
 pub fn get(conn: &Connection, id: i64) -> Result<Item, String> {
     let mut item = conn
         .query_row(
-            "SELECT id, name, type, colour, notes, template_id, archived FROM item WHERE id = ?1",
+            "SELECT id, name, type, colour, notes, template_id, archived,
+                    (SELECT t.id FROM template t WHERE t.item_id = item.id)
+             FROM item WHERE id = ?1",
             params![id],
             |r| {
                 Ok(Item {
@@ -125,6 +135,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Item, String> {
                     notes: r.get(4)?,
                     template_id: r.get(5)?,
                     archived: r.get::<_, i64>(6)? != 0,
+                    live_template_id: r.get(7)?,
                     lines: vec![],
                 })
             },
@@ -193,6 +204,12 @@ pub fn create(conn: &mut Connection, input: &ItemInput) -> Result<Item, String> 
 /// Replaces the item's fields and its whole ingredient list.
 pub fn update(conn: &mut Connection, id: i64, input: &ItemInput) -> Result<Item, String> {
     let name = validate(input)?;
+    let is_chip: bool = conn
+        .query_row("SELECT EXISTS (SELECT 1 FROM template WHERE item_id = ?1)", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if is_chip {
+        return Err("This is a template's chip - edit it in Library → Templates".into());
+    }
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let old_type: Option<String> = tx
         .query_row("SELECT type FROM item WHERE id = ?1", params![id], |r| r.get(0))
@@ -335,7 +352,7 @@ mod tests {
     #[test]
     fn list_filters_by_type_and_search() {
         let conn = test_conn();
-        assert_eq!(list(&conn, None, None, false).unwrap().len(), 8);
+        assert_eq!(list(&conn, None, None, false).unwrap().len(), 10);
         let meats = list(&conn, Some("meat"), None, false).unwrap();
         assert_eq!(meats.len(), 3);
         let found = list(&conn, None, Some(" spag "), false).unwrap();

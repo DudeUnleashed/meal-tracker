@@ -40,6 +40,8 @@ pub fn run() {
             commands::usage::items_history,
             commands::plan::plan_list,
             commands::plan::plan_add,
+            commands::plan::plan_add_blank,
+            commands::plan::plan_set_picks,
             commands::plan::plan_move,
             commands::plan::plan_update,
             commands::plan::plan_copy_range,

@@ -22,6 +22,33 @@ pub struct PlanEntry {
     pub position: i64,
     /// Size multiplier for meal and side entries (1.0 = the usual one night). Meat uses serves.
     pub scale: f64,
+    /// breakfast, lunch, dinner or snack.
+    pub slot: String,
+    /// Title of a Blank (takeaway etc.) entry.
+    pub label: Option<String>,
+    /// The template this chip comes from, for template chips.
+    pub template_id: Option<i64>,
+    /// What this night chose for the template's slots.
+    pub picks: Vec<Pick>,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct Pick {
+    pub line_id: Option<i64>,
+    pub ingredient_id: i64,
+    pub ingredient_name: String,
+    pub unit: String,
+    pub quantity: f64,
+}
+
+pub const SLOTS: [&str; 4] = ["breakfast", "lunch", "dinner", "snack"];
+
+fn check_slot(slot: &str) -> Result<(), String> {
+    if SLOTS.contains(&slot) {
+        Ok(())
+    } else {
+        Err(format!("Slot must be one of: {}", SLOTS.join(", ")))
+    }
 }
 
 fn parse_date(s: &str) -> Result<String, String> {
@@ -32,9 +59,10 @@ fn parse_date(s: &str) -> Result<String, String> {
 
 const SELECT: &str = "
     SELECT pe.id, pe.date, pe.item_id, i.name, i.type, i.colour, i.archived,
-           pe.serves, pe.note, pe.position, pe.scale
+           pe.serves, pe.note, pe.position, pe.scale, pe.slot, pe.label, t.id
     FROM plan_entry pe
-    JOIN item i ON i.id = pe.item_id";
+    JOIN item i ON i.id = pe.item_id
+    LEFT JOIN template t ON t.item_id = i.id";
 
 fn from_row(r: &rusqlite::Row) -> rusqlite::Result<PlanEntry> {
     Ok(PlanEntry {
@@ -49,10 +77,59 @@ fn from_row(r: &rusqlite::Row) -> rusqlite::Result<PlanEntry> {
         note: r.get(8)?,
         position: r.get(9)?,
         scale: r.get(10)?,
+        slot: r.get(11)?,
+        label: r.get(12)?,
+        template_id: r.get(13)?,
+        picks: vec![],
     })
 }
 
-/// Entries dated `start..=end`, ordered by day then position within the day.
+/// Fills in each entry's picks (one query for the lot).
+fn attach_picks(conn: &Connection, entries: &mut [PlanEntry]) -> Result<(), String> {
+    let Some(first) = entries.first() else { return Ok(()) };
+    let (mut lo, mut hi) = (first.date.clone(), first.date.clone());
+    for e in entries.iter() {
+        if e.date < lo {
+            lo = e.date.clone();
+        }
+        if e.date > hi {
+            hi = e.date.clone();
+        }
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT k.entry_id, k.line_id, k.ingredient_id, g.name, g.unit, k.quantity
+             FROM plan_entry_pick k
+             JOIN plan_entry pe ON pe.id = k.entry_id
+             JOIN ingredient g ON g.id = k.ingredient_id
+             WHERE pe.date BETWEEN ?1 AND ?2 ORDER BY k.entry_id, k.position, k.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![lo, hi], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                Pick {
+                    line_id: r.get(1)?,
+                    ingredient_id: r.get(2)?,
+                    ingredient_name: r.get(3)?,
+                    unit: r.get(4)?,
+                    quantity: r.get(5)?,
+                },
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    for (entry_id, pick) in rows {
+        if let Some(e) = entries.iter_mut().find(|e| e.id == entry_id) {
+            e.picks.push(pick);
+        }
+    }
+    Ok(())
+}
+
+/// Entries dated `start..=end`, ordered by day then position (the app groups them by slot).
 pub fn list(conn: &Connection, start: &str, end: &str) -> Result<Vec<PlanEntry>, String> {
     let (start, end) = (parse_date(start)?, parse_date(end)?);
     let mut stmt = conn
@@ -65,15 +142,20 @@ pub fn list(conn: &Connection, start: &str, end: &str) -> Result<Vec<PlanEntry>,
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+    let mut rows = rows;
+    attach_picks(conn, &mut rows)?;
     Ok(rows)
 }
 
 fn get(conn: &Connection, id: i64) -> Result<PlanEntry, String> {
-    conn.query_row(&format!("{SELECT} WHERE pe.id = ?1"), params![id], from_row)
+    let mut e = conn
+        .query_row(&format!("{SELECT} WHERE pe.id = ?1"), params![id], from_row)
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => "Plan entry not found".to_string(),
             e => e.to_string(),
-        })
+        })?;
+    attach_picks(conn, std::slice::from_mut(&mut e))?;
+    Ok(e)
 }
 
 /// Puts an item on a day, at the end of that day's entries.
@@ -87,15 +169,17 @@ pub fn add(
     date: &str,
     serves: Option<i64>,
 ) -> Result<PlanEntry, String> {
-    add_at(conn, item_id, date, serves, None)
+    add_at(conn, item_id, date, None, serves, None)
 }
 
-/// Like [`add`], but puts the entry at `position` in the day (0-based, clamped) instead of
-/// the end, so dropping onto a chip is a single step.
+/// Like [`add`], but into a chosen `slot` (default: dinner, or snack for Sweet/Savory items)
+/// and at `position` in that slot (0-based, clamped) instead of the end, so dropping onto a
+/// chip is a single step.
 pub fn add_at(
     conn: &Connection,
     item_id: i64,
     date: &str,
+    slot: Option<&str>,
     serves: Option<i64>,
     position: Option<i64>,
 ) -> Result<PlanEntry, String> {
@@ -111,6 +195,12 @@ pub fn add_at(
     if archived {
         return Err("Archived items can't be added to the plan".into());
     }
+    let slot = match slot {
+        Some(s) => s,
+        None if item_type == "sweet" => "snack",
+        None => "dinner",
+    };
+    check_slot(slot)?;
 
     let serves = if item_type == "meat" {
         let n = match serves {
@@ -129,21 +219,68 @@ pub fn add_at(
 
     let end_position: i64 = conn
         .query_row(
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM plan_entry WHERE date = ?1",
-            params![date],
+            "SELECT COALESCE(MAX(position) + 1, 0) FROM plan_entry WHERE date = ?1 AND slot = ?2",
+            params![date, slot],
             |r| r.get(0),
         )
         .map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO plan_entry (date, item_id, serves, position) VALUES (?1, ?2, ?3, ?4)",
-        params![date, item_id, serves, end_position],
+        "INSERT INTO plan_entry (date, item_id, serves, position, slot) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![date, item_id, serves, end_position, slot],
     )
     .map_err(|e| e.to_string())?;
     let id = conn.last_insert_rowid();
     match position {
-        Some(p) => move_entry(conn, id, &date, p),
+        Some(p) => move_to(conn, id, &date, slot, p),
         None => get(conn, id),
     }
+}
+
+/// The Blank token (takeaway, eating out…): a plan entry with a typed title instead of a meal.
+/// It rides on one hidden system item, created the first time it's needed.
+pub fn add_blank(
+    conn: &Connection,
+    date: &str,
+    slot: Option<&str>,
+    label: Option<&str>,
+    position: Option<i64>,
+) -> Result<PlanEntry, String> {
+    let existing: Option<i64> = conn
+        .query_row("SELECT id FROM item WHERE type = 'blank' LIMIT 1", [], |r| r.get(0))
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(e),
+        })
+        .map_err(|e| e.to_string())?;
+    let item_id = match existing {
+        Some(id) => id,
+        None => {
+            conn.execute("INSERT INTO item (name, type) VALUES ('Blank', 'blank')", [])
+                .map_err(|e| e.to_string())?;
+            conn.last_insert_rowid()
+        }
+    };
+    let entry = add_at(conn, item_id, date, Some(slot.unwrap_or("dinner")), None, position)?;
+    match label {
+        Some(l) => set_label(conn, entry.id, l),
+        None => Ok(entry),
+    }
+}
+
+/// Sets (or, when blank, clears) the title of a Blank entry.
+pub fn set_label(conn: &Connection, id: i64, label: &str) -> Result<PlanEntry, String> {
+    let entry = get(conn, id)?;
+    if entry.item_type != "blank" {
+        return Err("Only Blank entries have a title".into());
+    }
+    let label = label.trim();
+    conn.execute(
+        "UPDATE plan_entry SET label = ?1 WHERE id = ?2",
+        params![if label.is_empty() { None } else { Some(label) }, id],
+    )
+    .map_err(|e| e.to_string())?;
+    get(conn, id)
 }
 
 /// Moves an entry to `date` at `position` (0-based; clamped to the end of that day).
@@ -151,36 +288,43 @@ pub fn add_at(
 /// Works within a day (reorder) and across days. Both affected days are renumbered 0..n
 /// so positions stay contiguous.
 pub fn move_entry(conn: &Connection, id: i64, date: &str, position: i64) -> Result<PlanEntry, String> {
+    let slot = get(conn, id)?.slot;
+    move_to(conn, id, date, &slot, position)
+}
+
+/// [`move_entry`] into a particular slot of the day. Each slot is numbered 0..n on its own.
+pub fn move_to(conn: &Connection, id: i64, date: &str, slot: &str, position: i64) -> Result<PlanEntry, String> {
     let date = parse_date(date)?;
-    let old_date: String = conn
-        .query_row("SELECT date FROM plan_entry WHERE id = ?1", params![id], |r| r.get(0))
+    check_slot(slot)?;
+    let (old_date, old_slot): (String, String) = conn
+        .query_row("SELECT date, slot FROM plan_entry WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?)))
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => "Plan entry not found".to_string(),
             e => e.to_string(),
         })?;
 
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    let mut ids = day_ids(&tx, &date, Some(id))?;
+    let mut ids = day_ids(&tx, &date, slot, Some(id))?;
     let at = position.clamp(0, ids.len() as i64) as usize;
     ids.insert(at, id);
-    tx.execute("UPDATE plan_entry SET date = ?1 WHERE id = ?2", params![date, id])
+    tx.execute("UPDATE plan_entry SET date = ?1, slot = ?2 WHERE id = ?3", params![date, slot, id])
         .map_err(|e| e.to_string())?;
     renumber(&tx, &ids)?;
-    if old_date != date {
-        let rest = day_ids(&tx, &old_date, None)?;
+    if old_date != date || old_slot != slot {
+        let rest = day_ids(&tx, &old_date, &old_slot, None)?;
         renumber(&tx, &rest)?;
     }
     tx.commit().map_err(|e| e.to_string())?;
     get(conn, id)
 }
 
-/// Entry ids on a day in display order, optionally leaving one out.
-fn day_ids(conn: &Connection, date: &str, exclude: Option<i64>) -> Result<Vec<i64>, String> {
+/// Entry ids in one slot of a day in display order, optionally leaving one out.
+fn day_ids(conn: &Connection, date: &str, slot: &str, exclude: Option<i64>) -> Result<Vec<i64>, String> {
     let mut stmt = conn
-        .prepare("SELECT id FROM plan_entry WHERE date = ?1 AND id != ?2 ORDER BY position, id")
+        .prepare("SELECT id FROM plan_entry WHERE date = ?1 AND slot = ?2 AND id != ?3 ORDER BY position, id")
         .map_err(|e| e.to_string())?;
     let ids = stmt
-        .query_map(params![date, exclude.unwrap_or(-1)], |r| r.get(0))
+        .query_map(params![date, slot, exclude.unwrap_or(-1)], |r| r.get(0))
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<i64>, _>>()
         .map_err(|e| e.to_string())?;
@@ -289,14 +433,23 @@ pub fn copy_range(
         let new_date = (parse(&e.date)? + offset).format("%Y-%m-%d").to_string();
         let position: i64 = tx
             .query_row(
-                "SELECT COALESCE(MAX(position) + 1, 0) FROM plan_entry WHERE date = ?1",
-                params![new_date],
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM plan_entry WHERE date = ?1 AND slot = ?2",
+                params![new_date, e.slot],
                 |r| r.get(0),
             )
             .map_err(|e| e.to_string())?;
         tx.execute(
-            "INSERT INTO plan_entry (date, item_id, serves, position, scale) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![new_date, e.item_id, e.serves, position, e.scale],
+            "INSERT INTO plan_entry (date, item_id, serves, position, scale, slot, label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![new_date, e.item_id, e.serves, position, e.scale, e.slot, e.label],
+        )
+        .map_err(|e| e.to_string())?;
+        let new_id = tx.last_insert_rowid();
+        // What the night picked comes along (the amounts were copied in when picked).
+        tx.execute(
+            "INSERT INTO plan_entry_pick (entry_id, line_id, ingredient_id, quantity, position)
+             SELECT ?1, line_id, ingredient_id, quantity, position FROM plan_entry_pick WHERE entry_id = ?2",
+            params![new_id, e.id],
         )
         .map_err(|e| e.to_string())?;
         result.copied += 1;
@@ -321,9 +474,92 @@ pub fn remove(conn: &Connection, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct PickInput {
+    pub line_id: Option<i64>,
+    pub ingredient_id: i64,
+    /// `None` uses the template's default for this ingredient.
+    pub quantity: Option<f64>,
+}
+
+/// The amount a template suggests for an ingredient picked on a line: the line's candidate
+/// amount, else the line's default amount when its unit hint matches the ingredient's unit.
+fn default_quantity(conn: &Connection, line_id: i64, ingredient_id: i64, unit: &str) -> Result<Option<f64>, String> {
+    let option: Option<Option<f64>> = conn
+        .query_row(
+            "SELECT quantity FROM template_option WHERE line_id = ?1 AND ingredient_id = ?2",
+            params![line_id, ingredient_id],
+            |r| r.get(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(e),
+        })
+        .map_err(|e| e.to_string())?;
+    if let Some(Some(q)) = option {
+        return Ok(Some(q));
+    }
+    let (q, hint): (Option<f64>, Option<String>) = conn
+        .query_row("SELECT quantity, unit_hint FROM template_line WHERE id = ?1", params![line_id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(match hint {
+        Some(h) if h != unit => None,
+        _ => q,
+    })
+}
+
+/// Replaces what a template chip picked for its slots on this night.
+pub fn set_picks(conn: &Connection, entry_id: i64, picks: &[PickInput]) -> Result<PlanEntry, String> {
+    let entry = get(conn, entry_id)?;
+    let Some(template_id) = entry.template_id else {
+        return Err("Only template chips have ingredient choices".into());
+    };
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM plan_entry_pick WHERE entry_id = ?1", params![entry_id]).map_err(|e| e.to_string())?;
+    let mut seen: Vec<(Option<i64>, i64)> = Vec::new();
+    for (pos, p) in picks.iter().enumerate() {
+        if seen.contains(&(p.line_id, p.ingredient_id)) {
+            continue; // the same ingredient ticked twice is one pick
+        }
+        seen.push((p.line_id, p.ingredient_id));
+        let (name, unit): (String, String) = tx
+            .query_row("SELECT name, unit FROM ingredient WHERE id = ?1", params![p.ingredient_id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .map_err(|_| "Ingredient not found".to_string())?;
+        let quantity = match (p.quantity, p.line_id) {
+            (Some(q), _) => Some(q),
+            (None, Some(line)) => {
+                let owner: Option<i64> = tx
+                    .query_row("SELECT template_id FROM template_line WHERE id = ?1", params![line], |r| r.get(0))
+                    .ok();
+                if owner != Some(template_id) {
+                    return Err("That slot isn't part of this template".into());
+                }
+                default_quantity(&tx, line, p.ingredient_id, &unit)?
+            }
+            (None, None) => None,
+        };
+        let Some(q) = quantity.filter(|q| q.is_finite() && *q > 0.0) else {
+            return Err(format!("Set an amount for {name}"));
+        };
+        tx.execute(
+            "INSERT INTO plan_entry_pick (entry_id, line_id, ingredient_id, quantity, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![entry_id, p.line_id, p.ingredient_id, q, pos as i64],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    get(conn, entry_id)
+}
+
 fn entry_label(conn: &Connection, verb: &str, id: i64) -> String {
     match get(conn, id) {
-        Ok(e) => format!("{verb} {}", e.item_name),
+        Ok(e) => format!("{verb} {}", e.label.as_deref().unwrap_or(&e.item_name)),
         Err(_) => format!("{verb} a dinner"),
     }
 }
@@ -340,6 +576,7 @@ pub fn plan_add(
     undo: State<UndoStack>,
     item_id: i64,
     date: String,
+    slot: Option<String>,
     serves: Option<i64>,
     position: Option<i64>,
 ) -> Result<PlanEntry, String> {
@@ -351,8 +588,35 @@ pub fn plan_add(
                 c.query_row("SELECT name FROM item WHERE id = ?1", params![item_id], |r| r.get(0));
             format!("Added {}", name.unwrap_or_else(|_| "a dinner".into()))
         },
-        |c| add_at(c, item_id, &date, serves, position),
+        |c| add_at(c, item_id, &date, slot.as_deref(), serves, position),
     )
+}
+
+#[tauri::command]
+pub fn plan_add_blank(
+    db: State<Db>,
+    undo: State<UndoStack>,
+    date: String,
+    slot: Option<String>,
+    label: Option<String>,
+    position: Option<i64>,
+) -> Result<PlanEntry, String> {
+    tracked(
+        &db,
+        &undo,
+        |_| "Added a blank".to_string(),
+        |c| add_blank(c, &date, slot.as_deref(), label.as_deref(), position),
+    )
+}
+
+#[tauri::command]
+pub fn plan_set_picks(
+    db: State<Db>,
+    undo: State<UndoStack>,
+    id: i64,
+    picks: Vec<PickInput>,
+) -> Result<PlanEntry, String> {
+    tracked(&db, &undo, |c| entry_label(c, "Changed", id), |c| set_picks(c, id, &picks))
 }
 
 #[tauri::command]
@@ -361,9 +625,13 @@ pub fn plan_move(
     undo: State<UndoStack>,
     id: i64,
     date: String,
+    slot: Option<String>,
     position: i64,
 ) -> Result<PlanEntry, String> {
-    tracked(&db, &undo, |c| entry_label(c, "Moved", id), |c| move_entry(c, id, &date, position))
+    tracked(&db, &undo, |c| entry_label(c, "Moved", id), |c| match slot.as_deref() {
+        Some(slot) => move_to(c, id, &date, slot, position),
+        None => move_entry(c, id, &date, position),
+    })
 }
 
 #[tauri::command]
@@ -374,12 +642,19 @@ pub fn plan_update(
     serves: Option<i64>,
     note: Option<String>,
     scale: Option<f64>,
+    label: Option<String>,
 ) -> Result<PlanEntry, String> {
     tracked(
         &db,
         &undo,
         |c| entry_label(c, "Changed", id),
-        |c| update_with(c, id, serves, note.as_deref(), scale),
+        |c| {
+            update_with(c, id, serves, note.as_deref(), scale)?;
+            match label.as_deref() {
+                Some(l) => set_label(c, id, l),
+                None => get(c, id),
+            }
+        },
     )
 }
 
@@ -599,11 +874,11 @@ mod tests {
         let conn = test_conn();
         add(&conn, item_id(&conn, "Steak"), "2026-10-06", None).unwrap();
         add(&conn, item_id(&conn, "Chips"), "2026-10-06", None).unwrap();
-        let e = add_at(&conn, item_id(&conn, "Garden salad"), "2026-10-06", None, Some(1)).unwrap();
+        let e = add_at(&conn, item_id(&conn, "Garden salad"), "2026-10-06", None, None, Some(1)).unwrap();
         assert_eq!(e.position, 1);
         assert_eq!(names(&conn, "2026-10-06"), ["Steak", "Garden salad", "Chips"]);
         assert_eq!(positions(&conn, "2026-10-06"), [0, 1, 2]);
-        add_at(&conn, item_id(&conn, "Steamed veg"), "2026-10-06", None, Some(99)).unwrap();
+        add_at(&conn, item_id(&conn, "Steamed veg"), "2026-10-06", None, None, Some(99)).unwrap();
         assert_eq!(names(&conn, "2026-10-06")[3], "Steamed veg", "clamped to the end");
     }
 

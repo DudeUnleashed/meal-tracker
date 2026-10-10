@@ -10,6 +10,7 @@ const UNITS: [&str; 3] = ["g", "ml", "each"];
 pub struct TemplateSummary {
     pub id: i64,
     pub name: String,
+    pub item_type: String,
     pub fixed_count: i64,
     pub slot_count: i64,
 }
@@ -28,29 +29,71 @@ pub struct TemplateLine {
     pub quantity: Option<f64>,
     /// Unit the default quantity is in, for slots.
     pub unit_hint: Option<String>,
+    /// A slot you can tick several ingredients on in one night (steamed veg).
+    pub multi: bool,
+    /// Candidate ingredients for a slot; empty means "anything in the category".
+    pub options: Vec<TemplateOption>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct TemplateOption {
+    pub id: i64,
+    pub ingredient_id: i64,
+    pub ingredient_name: String,
+    pub ingredient_unit: String,
+    /// Default amount, in the ingredient's own unit.
+    pub quantity: Option<f64>,
 }
 
 #[derive(Serialize, Debug)]
 pub struct Template {
     pub id: i64,
     pub name: String,
+    /// What the template's chip is: meal, side or sweet.
+    pub item_type: String,
+    pub colour: Option<String>,
+    /// The library chip for this template (a linked item).
+    pub item_id: Option<i64>,
     pub lines: Vec<TemplateLine>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct OptionInput {
+    pub ingredient_id: i64,
+    pub quantity: Option<f64>,
+}
+
+#[derive(Deserialize, Default, Clone)]
 pub struct LineInput {
+    /// Existing line to keep (so nights that picked from it stay attached); omit for a new line.
+    #[serde(default)]
+    pub id: Option<i64>,
     pub label: String,
     pub ingredient_id: Option<i64>,
     pub category_id: Option<i64>,
     pub quantity: Option<f64>,
     pub unit_hint: Option<String>,
+    #[serde(default)]
+    pub multi: bool,
+    #[serde(default)]
+    pub options: Vec<OptionInput>,
 }
 
 #[derive(Deserialize)]
 pub struct TemplateInput {
     pub name: String,
+    #[serde(default = "meal")]
+    pub item_type: String,
+    #[serde(default)]
+    pub colour: Option<String>,
     pub lines: Vec<LineInput>,
 }
+
+fn meal() -> String {
+    "meal".into()
+}
+
+const TYPES: [&str; 3] = ["meal", "side", "sweet"];
 
 #[derive(Deserialize)]
 pub struct SlotFill {
@@ -83,6 +126,9 @@ fn clean(input: &TemplateInput) -> Result<(String, Vec<LineInput>), String> {
     if name.is_empty() {
         return Err("Name is required".into());
     }
+    if !TYPES.contains(&input.item_type.as_str()) {
+        return Err(format!("Type must be one of: {}", TYPES.join(", ")));
+    }
     let mut lines = Vec::new();
     for l in &input.lines {
         let label = l.label.trim().to_string();
@@ -96,11 +142,14 @@ fn clean(input: &TemplateInput) -> Result<(String, Vec<LineInput>), String> {
                     return Err(format!("\"{label}\" needs a quantity greater than zero"));
                 }
                 lines.push(LineInput {
+                    id: l.id,
                     label,
                     ingredient_id: l.ingredient_id,
                     category_id: None,
                     quantity: l.quantity,
                     unit_hint: None,
+                    multi: false,
+                    options: vec![],
                 });
             }
             None => {
@@ -111,12 +160,25 @@ fn clean(input: &TemplateInput) -> Result<(String, Vec<LineInput>), String> {
                 if hint.is_some_and(|h| !UNITS.contains(&h)) {
                     return Err(format!("Unit hint must be one of: {}", UNITS.join(", ")));
                 }
+                if l.options.iter().any(|o| o.quantity.is_some_and(|q| !positive(q))) {
+                    return Err(format!("\"{label}\" has an option with an invalid amount"));
+                }
+                let mut seen = Vec::new();
+                for o in &l.options {
+                    if seen.contains(&o.ingredient_id) {
+                        return Err(format!("\"{label}\" lists the same ingredient twice"));
+                    }
+                    seen.push(o.ingredient_id);
+                }
                 lines.push(LineInput {
+                    id: l.id,
                     label,
                     ingredient_id: None,
                     category_id: l.category_id,
                     quantity: l.quantity,
                     unit_hint: hint.map(str::to_string),
+                    multi: l.multi,
+                    options: l.options.clone(),
                 });
             }
         }
@@ -127,7 +189,7 @@ fn clean(input: &TemplateInput) -> Result<(String, Vec<LineInput>), String> {
 pub fn list(conn: &Connection) -> Result<Vec<TemplateSummary>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT t.id, t.name,
+            "SELECT t.id, t.name, t.item_type,
                     COUNT(tl.id) FILTER (WHERE tl.ingredient_id IS NOT NULL),
                     COUNT(tl.id) FILTER (WHERE tl.ingredient_id IS NULL)
              FROM template t LEFT JOIN template_line tl ON tl.template_id = t.id
@@ -136,7 +198,13 @@ pub fn list(conn: &Connection) -> Result<Vec<TemplateSummary>, String> {
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
-            Ok(TemplateSummary { id: r.get(0)?, name: r.get(1)?, fixed_count: r.get(2)?, slot_count: r.get(3)? })
+            Ok(TemplateSummary {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                item_type: r.get(2)?,
+                fixed_count: r.get(3)?,
+                slot_count: r.get(4)?,
+            })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
@@ -145,8 +213,10 @@ pub fn list(conn: &Connection) -> Result<Vec<TemplateSummary>, String> {
 }
 
 pub fn get(conn: &Connection, id: i64) -> Result<Template, String> {
-    let name: String = conn
-        .query_row("SELECT name FROM template WHERE id = ?1", params![id], |r| r.get(0))
+    let (name, item_type, colour, item_id): (String, String, Option<String>, Option<i64>) = conn
+        .query_row("SELECT name, item_type, colour, item_id FROM template WHERE id = ?1", params![id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => "Template not found".to_string(),
             e => e.to_string(),
@@ -154,7 +224,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Template, String> {
     let mut stmt = conn
         .prepare(
             "SELECT tl.id, tl.label, tl.ingredient_id, g.name, g.unit,
-                    tl.category_id, c.name, tl.quantity, tl.unit_hint
+                    tl.category_id, c.name, tl.quantity, tl.unit_hint, tl.multi
              FROM template_line tl
              LEFT JOIN ingredient g ON g.id = tl.ingredient_id
              LEFT JOIN ingredient_category c ON c.id = tl.category_id
@@ -173,62 +243,217 @@ pub fn get(conn: &Connection, id: i64) -> Result<Template, String> {
                 category_name: r.get(6)?,
                 quantity: r.get(7)?,
                 unit_hint: r.get(8)?,
+                multi: r.get::<_, i64>(9)? != 0,
+                options: vec![],
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    Ok(Template { id, name, lines })
-}
-
-fn write_lines(conn: &Connection, template_id: i64, lines: &[LineInput]) -> Result<(), String> {
-    for (pos, l) in lines.iter().enumerate() {
-        conn.execute(
-            "INSERT INTO template_line
-               (template_id, label, ingredient_id, category_id, quantity, unit_hint, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![template_id, l.label, l.ingredient_id, l.category_id, l.quantity, l.unit_hint, pos as i64],
+    let mut lines = lines;
+    let mut stmt = conn
+        .prepare(
+            "SELECT o.id, o.ingredient_id, g.name, g.unit, o.quantity
+             FROM template_option o JOIN ingredient g ON g.id = o.ingredient_id
+             WHERE o.line_id = ?1 ORDER BY o.position, o.id",
         )
         .map_err(|e| e.to_string())?;
+    for line in &mut lines {
+        line.options = stmt
+            .query_map(params![line.id], |r| {
+                Ok(TemplateOption {
+                    id: r.get(0)?,
+                    ingredient_id: r.get(1)?,
+                    ingredient_name: r.get(2)?,
+                    ingredient_unit: r.get(3)?,
+                    quantity: r.get(4)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(Template { id, name, item_type, colour, item_id, lines })
+}
+
+/// Inserts or updates each line (keeping the id of lines that already exist, so nights that
+/// picked from them stay attached), removes lines that are gone, and rewrites their options.
+fn write_lines(conn: &Connection, template_id: i64, lines: &[LineInput]) -> Result<(), String> {
+    let existing: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM template_line WHERE template_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let ids = stmt
+            .query_map(params![template_id], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<i64>, _>>()
+            .map_err(|e| e.to_string())?;
+        ids
+    };
+    for id in &existing {
+        if !lines.iter().any(|l| l.id == Some(*id)) {
+            conn.execute("DELETE FROM template_line WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
+        }
+    }
+    for (pos, l) in lines.iter().enumerate() {
+        let line_id = match l.id {
+            Some(id) if existing.contains(&id) => {
+                conn.execute(
+                    "UPDATE template_line SET label = ?1, ingredient_id = ?2, category_id = ?3, quantity = ?4,
+                            unit_hint = ?5, multi = ?6, position = ?7 WHERE id = ?8",
+                    params![l.label, l.ingredient_id, l.category_id, l.quantity, l.unit_hint, l.multi, pos as i64, id],
+                )
+                .map_err(|e| e.to_string())?;
+                id
+            }
+            Some(_) => return Err("That line isn't part of this template".into()),
+            None => {
+                conn.execute(
+                    "INSERT INTO template_line
+                       (template_id, label, ingredient_id, category_id, quantity, unit_hint, multi, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![template_id, l.label, l.ingredient_id, l.category_id, l.quantity, l.unit_hint, l.multi, pos as i64],
+                )
+                .map_err(|e| e.to_string())?;
+                conn.last_insert_rowid()
+            }
+        };
+        conn.execute("DELETE FROM template_option WHERE line_id = ?1", params![line_id])
+            .map_err(|e| e.to_string())?;
+        for (opos, o) in l.options.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO template_option (line_id, ingredient_id, quantity, position) VALUES (?1, ?2, ?3, ?4)",
+                params![line_id, o.ingredient_id, o.quantity, opos as i64],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Keeps the template's chip (a linked item) in step with the template: creates it if missing,
+/// copies the name, type and colour, and mirrors the fixed lines as its ingredients. Which
+/// ingredients a slot adds on a given night is stored on the plan entry instead.
+pub fn sync_item(conn: &Connection, template_id: i64) -> Result<i64, String> {
+    let (name, item_type, colour, item_id, sample): (String, String, Option<String>, Option<i64>, i64) = conn
+        .query_row(
+            "SELECT name, item_type, colour, item_id, sample FROM template WHERE id = ?1",
+            params![template_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let item_id = match item_id {
+        Some(id) => {
+            conn.execute(
+                "UPDATE item SET name = ?1, type = ?2, colour = ?3 WHERE id = ?4",
+                params![name, item_type, colour, id],
+            )
+            .map_err(|e| e.to_string())?;
+            id
+        }
+        None => {
+            conn.execute(
+                "INSERT INTO item (name, type, colour, sample) VALUES (?1, ?2, ?3, ?4)",
+                params![name, item_type, colour, sample],
+            )
+            .map_err(|e| e.to_string())?;
+            let id = conn.last_insert_rowid();
+            conn.execute("UPDATE template SET item_id = ?1 WHERE id = ?2", params![id, template_id])
+                .map_err(|e| e.to_string())?;
+            id
+        }
+    };
+    conn.execute("DELETE FROM item_ingredient WHERE item_id = ?1", params![item_id]).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO item_ingredient (item_id, ingredient_id, quantity, position)
+         SELECT ?1, ingredient_id, quantity, position FROM template_line
+         WHERE template_id = ?2 AND ingredient_id IS NOT NULL AND quantity IS NOT NULL
+         ORDER BY position, id",
+        params![item_id, template_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(item_id)
+}
+
+/// Gives every template a chip. Runs after migrations and after a backup is restored, which is
+/// how templates that predate live templates get theirs.
+pub fn ensure_items(conn: &Connection) -> Result<(), String> {
+    let ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM template WHERE item_id IS NULL")
+            .map_err(|e| e.to_string())?;
+        let ids = stmt
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<i64>, _>>()
+            .map_err(|e| e.to_string())?;
+        ids
+    };
+    for id in ids {
+        sync_item(conn, id)?;
     }
     Ok(())
 }
 
 pub fn create(conn: &mut Connection, input: &TemplateInput) -> Result<Template, String> {
     let (name, lines) = clean(input)?;
+    let colour = input.colour.as_deref().map(str::trim).filter(|c| !c.is_empty());
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    tx.execute("INSERT INTO template (name) VALUES (?1)", params![name]).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO template (name, item_type, colour) VALUES (?1, ?2, ?3)",
+        params![name, input.item_type, colour],
+    )
+    .map_err(|e| e.to_string())?;
     let id = tx.last_insert_rowid();
     write_lines(&tx, id, &lines)?;
+    sync_item(&tx, id)?;
     tx.commit().map_err(|e| e.to_string())?;
     get(conn, id)
 }
 
-/// Replaces the template's name and all its lines. Existing items are unaffected (they're copies).
+/// Replaces the template's name, type, colour and lines, and updates its chip. Nights already
+/// planned keep what they picked; items made *from* the template earlier are copies and unaffected.
 pub fn update(conn: &mut Connection, id: i64, input: &TemplateInput) -> Result<Template, String> {
     let (name, lines) = clean(input)?;
+    let colour = input.colour.as_deref().map(str::trim).filter(|c| !c.is_empty());
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let changed = tx
-        .execute("UPDATE template SET name = ?1 WHERE id = ?2", params![name, id])
+        .execute(
+            "UPDATE template SET name = ?1, item_type = ?2, colour = ?3 WHERE id = ?4",
+            params![name, input.item_type, colour, id],
+        )
         .map_err(|e| e.to_string())?;
     if changed == 0 {
         return Err("Template not found".into());
     }
-    tx.execute("DELETE FROM template_line WHERE template_id = ?1", params![id])
-        .map_err(|e| e.to_string())?;
     write_lines(&tx, id, &lines)?;
+    sync_item(&tx, id)?;
     tx.commit().map_err(|e| e.to_string())?;
     get(conn, id)
 }
 
-/// Deletes a template. Items made from it keep their ingredients and just lose the link.
+/// Deletes a template. Items made from it keep their ingredients and just lose the link. Its
+/// chip is removed too, or archived instead if it has been planned (so past weeks stay intact).
 pub fn delete(conn: &mut Connection, id: i64) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let item_id: Option<i64> = tx
+        .query_row("SELECT item_id FROM template WHERE id = ?1", params![id], |r| r.get(0))
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => "Template not found".to_string(),
+            e => e.to_string(),
+        })?;
     tx.execute("UPDATE item SET template_id = NULL WHERE template_id = ?1", params![id])
         .map_err(|e| e.to_string())?;
-    let changed = tx.execute("DELETE FROM template WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
-    if changed == 0 {
-        return Err("Template not found".into());
+    tx.execute("DELETE FROM template WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
+    if let Some(item_id) = item_id {
+        let planned: i64 = tx
+            .query_row("SELECT COUNT(*) FROM plan_entry WHERE item_id = ?1", params![item_id], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if planned > 0 {
+            tx.execute("UPDATE item SET archived = 1 WHERE id = ?1", params![item_id]).map_err(|e| e.to_string())?;
+        } else {
+            tx.execute("DELETE FROM item WHERE id = ?1", params![item_id]).map_err(|e| e.to_string())?;
+        }
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -351,11 +576,11 @@ mod tests {
     }
 
     fn fixed(label: &str, ingredient_id: i64, quantity: f64) -> LineInput {
-        LineInput { label: label.into(), ingredient_id: Some(ingredient_id), category_id: None, quantity: Some(quantity), unit_hint: None }
+        LineInput { label: label.into(), ingredient_id: Some(ingredient_id), quantity: Some(quantity), ..Default::default() }
     }
 
     fn slot_input(label: &str, category_id: Option<i64>, quantity: Option<f64>, hint: Option<&str>) -> LineInput {
-        LineInput { label: label.into(), ingredient_id: None, category_id, quantity, unit_hint: hint.map(Into::into) }
+        LineInput { label: label.into(), category_id, quantity, unit_hint: hint.map(Into::into), ..Default::default() }
     }
 
     #[test]
@@ -385,6 +610,8 @@ mod tests {
         let mut conn = test_conn();
         let meat = 1;
         let input = TemplateInput {
+            item_type: "meal".into(),
+            colour: None,
             name: "  Pasta bake ".into(),
             lines: vec![fixed("Pasta", ing(&conn, "Spaghetti"), 400.0), slot_input("Protein", Some(meat), Some(300.0), Some("g"))],
         };
@@ -393,6 +620,8 @@ mod tests {
         assert_eq!(t.lines.len(), 2);
 
         let edited = TemplateInput {
+            item_type: "meal".into(),
+            colour: None,
             name: "Pasta bake v2".into(),
             lines: vec![slot_input("Veg", None, None, None)],
         };
@@ -420,8 +649,9 @@ mod tests {
     fn rejects_bad_templates() {
         let mut conn = test_conn();
         let rice = ing(&conn, "Arborio rice");
-        let bad = |lines: Vec<LineInput>| TemplateInput { name: "T".into(), lines };
-        assert!(create(&mut conn, &TemplateInput { name: " ".into(), lines: vec![] }).is_err());
+        let bad = |lines: Vec<LineInput>| TemplateInput { name: "T".into(), item_type: "meal".into(), colour: None, lines };
+        assert!(create(&mut conn, &TemplateInput { name: " ".into(), item_type: "meal".into(), colour: None, lines: vec![] }).is_err());
+        assert!(create(&mut conn, &TemplateInput { name: "T".into(), item_type: "meat".into(), colour: None, lines: vec![] }).is_err(), "templates can't be meat");
         assert!(create(&mut conn, &bad(vec![fixed(" ", rice, 1.0)])).is_err(), "blank label");
         assert!(create(&mut conn, &bad(vec![fixed("Rice", rice, 0.0)])).is_err(), "fixed line needs a quantity");
         assert!(create(&mut conn, &bad(vec![slot_input("P", None, Some(-1.0), None)])).is_err());

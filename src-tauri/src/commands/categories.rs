@@ -51,6 +51,20 @@ pub fn reorder(conn: &Connection, ids: &[i64]) -> Result<Vec<IngredientCategory>
     list(conn)
 }
 
+/// Makes sure the shopping categories added after version 1 exist (a restored older backup
+/// replaces the category list). They go at the end so a saved order is left alone.
+pub fn ensure_defaults(conn: &Connection) -> Result<(), String> {
+    for name in ["Bakery", "Frozen"] {
+        conn.execute(
+            "INSERT OR IGNORE INTO ingredient_category (name, sort_order)
+             VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM ingredient_category))",
+            rusqlite::params![name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn categories_list(db: State<Db>) -> Result<Vec<IngredientCategory>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -75,7 +89,7 @@ mod tests {
     #[test]
     fn reorder_changes_the_order() {
         let conn = test_conn();
-        assert_eq!(names(&conn), ["Meat", "Seafood", "Veg", "Fruit", "Dairy", "Pantry", "Other"]);
+        assert_eq!(names(&conn), ["Meat", "Seafood", "Veg", "Fruit", "Dairy", "Pantry", "Other", "Bakery", "Frozen"]);
         // Put Veg first and Meat last.
         let mut ids: Vec<i64> = list(&conn).unwrap().into_iter().map(|c| c.id).collect();
         let veg = ids.remove(2);
@@ -85,7 +99,7 @@ mod tests {
         let after = reorder(&conn, &ids).unwrap();
         assert_eq!(
             after.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
-            ["Veg", "Seafood", "Fruit", "Dairy", "Pantry", "Other", "Meat"]
+            ["Veg", "Seafood", "Fruit", "Dairy", "Pantry", "Other", "Bakery", "Frozen", "Meat"]
         );
     }
 
