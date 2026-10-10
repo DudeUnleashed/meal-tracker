@@ -550,3 +550,29 @@ fn real_database_upgrades_cleanly() {
     let json = backup::export_json(&conn).unwrap();
     backup::import_json(&test_conn(), &json).unwrap();
 }
+
+/// `BACKUP=path/to/backup.json cargo test real_backup -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn real_backup_imports_and_works() {
+    let json = std::fs::read_to_string(std::env::var("BACKUP").expect("set BACKUP")).unwrap();
+    let conn = test_conn();
+    let s = backup::import_json(&conn, &json).unwrap();
+    println!("imported {s:?}");
+    let n = |t: &str| count(&conn, &format!("SELECT COUNT(*) FROM {t}"));
+    println!("items {} (chips {}), templates {}, entries {}, categories {}", n("item"), count(&conn, "SELECT COUNT(*) FROM template WHERE item_id IS NOT NULL"), n("template"), n("plan_entry"), n("ingredient_category"));
+    assert_eq!(n("template"), count(&conn, "SELECT COUNT(*) FROM template WHERE item_id IS NOT NULL"));
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM plan_entry WHERE slot != 'dinner'"), 0);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM pragma_foreign_key_check"), 0);
+    let sum = summary::summary(&conn, "2000-01-01", "2100-01-01").unwrap();
+    for r in &sum.rows {
+        println!("TOTAL\t{}\t{}\t{}", r.ingredient_name, r.unit, r.quantity);
+    }
+    // Re-export and re-import is stable.
+    let again = test_conn();
+    backup::import_json(&again, &backup::export_json(&conn).unwrap()).unwrap();
+    assert_eq!(
+        format!("{:?}", plan::list(&conn, "2000-01-01", "2100-01-01").unwrap()),
+        format!("{:?}", plan::list(&again, "2000-01-01", "2100-01-01").unwrap())
+    );
+}
