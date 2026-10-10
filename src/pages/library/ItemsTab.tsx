@@ -10,7 +10,7 @@ import {
   type ItemType,
 } from "../../lib/api";
 
-type Filter = ItemType | "all";
+type Filter = ItemType;
 // null = nothing selected, "new" = creating, number = editing that item.
 type Selection = number | "new" | null;
 
@@ -21,7 +21,7 @@ interface Props {
 }
 
 export default function ItemsTab({ ingredients, categories, onIngredientCreated }: Props) {
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>("meal");
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [items, setItems] = useState<ItemSummary[]>([]);
@@ -29,11 +29,14 @@ export default function ItemsTab({ ingredients, categories, onIngredientCreated 
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Typing a search looks across every type; otherwise the selected type's items are shown.
+  const searching = search.trim() !== "";
+
   const reload = useCallback(async () => {
     try {
       setItems(
         await api.items.list({
-          type: filter === "all" ? undefined : filter,
+          type: searching ? undefined : filter,
           search,
           includeArchived: showArchived,
         }),
@@ -41,7 +44,7 @@ export default function ItemsTab({ ingredients, categories, onIngredientCreated 
     } catch (e) {
       setError(String(e));
     }
-  }, [filter, search, showArchived]);
+  }, [filter, searching, search, showArchived]);
 
   useEffect(() => {
     reload();
@@ -61,17 +64,17 @@ export default function ItemsTab({ ingredients, categories, onIngredientCreated 
       <aside className="flex w-72 flex-col border-r border-slate-200 bg-white">
         <div className="space-y-2 border-b border-slate-200 p-3">
           <div className="flex gap-1">
-            {(["all", ...ITEM_TYPES] as Filter[]).map((f) => (
+            {ITEM_TYPES.map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
                 className={`flex-1 rounded px-2 py-1 text-xs font-medium ${
-                  filter === f
+                  !searching && filter === f
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
-                {f === "all" ? "All" : typeLabel(f)}
+                {typeLabel(f)}
               </button>
             ))}
           </div>
@@ -136,7 +139,7 @@ export default function ItemsTab({ ingredients, categories, onIngredientCreated 
           <ItemEditor
             key={selection}
             itemId={selection === "new" ? null : selection}
-            defaultType={filter === "all" ? "meal" : filter}
+            defaultType={filter}
             ingredients={ingredients}
             categories={categories}
             onIngredientCreated={onIngredientCreated}

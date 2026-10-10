@@ -4,10 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   api,
   errorMessage,
-  ITEM_TYPES,
   typeLabel,
   type ItemSummary,
-  type ItemType,
   type ItemUsage,
 } from "../lib/api";
 import { fromIso, toIso } from "../lib/dates";
@@ -26,7 +24,6 @@ interface Props {
 export default function ItemLibrary({ refreshKey }: Props) {
   const [items, setItems] = useState<ItemSummary[]>([]);
   const [usage, setUsage] = useState<Record<number, ItemUsage>>({});
-  const [tab, setTab] = useState<ItemType>("meal");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<Sort>("name");
   const [shuffle, setShuffle] = useState(0);
@@ -41,12 +38,10 @@ export default function ItemLibrary({ refreshKey }: Props) {
       .catch((e) => setError(errorMessage(e)));
   }, [refreshKey]);
 
-  // Searching looks across every type; otherwise show the selected tab.
+  // One flat list of everything (each card carries a type badge); search narrows it.
   const q = search.trim().toLowerCase();
   const shown = useMemo(() => {
-    const list = q
-      ? items.filter((i) => i.name.toLowerCase().includes(q))
-      : items.filter((i) => i.type === tab);
+    const list = q ? items.filter((i) => i.name.toLowerCase().includes(q)) : items;
     if (sort === "name") return list;
     // Least recently had first; never-had items lead.
     return [...list].sort((a, b) => {
@@ -54,7 +49,7 @@ export default function ItemLibrary({ refreshKey }: Props) {
       const lb = usage[b.id]?.last_had ?? "";
       return la.localeCompare(lb) || a.name.localeCompare(b.name);
     });
-  }, [items, usage, q, tab, sort]);
+  }, [items, usage, q, sort]);
 
   const suggestions = useMemo(() => pickSuggestions(items, usage, shuffle), [items, usage, shuffle]);
 
@@ -91,27 +86,9 @@ export default function ItemLibrary({ refreshKey }: Props) {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="🔍 Search all items…"
+          placeholder="🔍 Search items…"
           className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
         />
-        <div className="flex gap-1">
-          {ITEM_TYPES.map((t) => (
-            <button
-              key={t}
-              onClick={() => {
-                setTab(t);
-                setSearch("");
-              }}
-              className={`flex-1 rounded px-1 py-1 text-xs font-medium ${
-                !q && tab === t
-                  ? "bg-emerald-600 text-white"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              {t === "sweet" ? "Sweet/Savory" : typeLabel(t)}
-            </button>
-          ))}
-        </div>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           <input
             type="checkbox"
@@ -123,7 +100,7 @@ export default function ItemLibrary({ refreshKey }: Props) {
       </div>
       <ul className="flex-1 space-y-1.5 overflow-auto p-3">
         {shown.map((item) => (
-          <LibraryCard key={item.id} item={item} usage={usage[item.id]} showType={q !== ""} />
+          <LibraryCard key={item.id} item={item} usage={usage[item.id]} />
         ))}
         {shown.length === 0 && (
           <li className="text-sm text-slate-400">{error ?? "No items — add some in the Library."}</li>
@@ -226,11 +203,9 @@ export function LeftoversPreview() {
 function LibraryCard({
   item,
   usage,
-  showType,
 }: {
   item: ItemSummary;
   usage: ItemUsage | undefined;
-  showType: boolean;
 }) {
   const data: DragData = {
     kind: "item",
@@ -267,7 +242,7 @@ function LibraryCard({
             🧩
           </span>
         )}
-        {showType && <span className="text-xs text-slate-400">{typeLabel(item.type)}</span>}
+        <span className="rounded bg-slate-100 px-1.5 text-[10px] text-slate-500">{typeLabel(item.type)}</span>
       </div>
       <div className="text-xs text-slate-400">
         {status.length ? status.join(" · ") : "not had yet"}

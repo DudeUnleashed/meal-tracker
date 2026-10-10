@@ -150,11 +150,11 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
 
       {entry.serves !== null && (
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500">Serves</span>
+          <span className="text-xs text-slate-500">Portions</span>
           <button
             onClick={() => changeServes(entry.serves! - 1)}
             disabled={entry.serves <= 1}
-            aria-label="Fewer serves"
+            aria-label="Fewer portions"
             className="h-6 w-6 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40"
           >
             −
@@ -162,7 +162,7 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
           <span className="w-6 text-center font-medium">{entry.serves}</span>
           <button
             onClick={() => changeServes(entry.serves! + 1)}
-            aria-label="More serves"
+            aria-label="More portions"
             className="h-6 w-6 rounded bg-slate-100 hover:bg-slate-200"
           >
             +

@@ -210,7 +210,7 @@ pub fn add_at(
                 .unwrap_or(3),
         };
         if n < 1 {
-            return Err("Serves must be at least 1".into());
+            return Err("Portions must be at least 1".into());
         }
         Some(n)
     } else {
@@ -366,7 +366,7 @@ pub fn update_with(
     let entry = get(conn, id)?;
     if let Some(sc) = scale {
         if entry.item_type == "meat" {
-            return Err("Meat entries are sized by serves, not a multiplier".into());
+            return Err("Portioned entries are sized by portions, not a multiplier".into());
         }
         if !(sc.is_finite() && sc > 0.0 && sc <= MAX_SCALE) {
             return Err(format!("Size must be more than 0 and at most {MAX_SCALE}"));
@@ -376,10 +376,10 @@ pub fn update_with(
     }
     if let Some(n) = serves {
         if entry.item_type != "meat" {
-            return Err("Only meat entries have serves".into());
+            return Err("Only portioned entries have portions".into());
         }
         if n < 1 {
-            return Err("Serves must be at least 1".into());
+            return Err("Portions must be at least 1".into());
         }
         conn.execute("UPDATE plan_entry SET serves = ?1 WHERE id = ?2", params![n, id])
             .map_err(|e| e.to_string())?;
@@ -811,7 +811,7 @@ mod tests {
 
         assert!(update(&conn, steak.id, Some(0), None).is_err());
         let chips = add(&conn, item_id(&conn, "Chips"), "2026-10-06", None).unwrap();
-        assert_eq!(update(&conn, chips.id, Some(2), None).unwrap_err(), "Only meat entries have serves");
+        assert_eq!(update(&conn, chips.id, Some(2), None).unwrap_err(), "Only portioned entries have portions");
         assert!(update(&conn, chips.id, None, Some("crispy")).is_ok());
         assert_eq!(update(&conn, 9999, None, None).unwrap_err(), "Plan entry not found");
     }

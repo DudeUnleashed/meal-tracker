@@ -38,7 +38,7 @@ export default function DataSection() {
       setMessage({
         ok: true,
         text:
-          `Removed ${plural(r.items, "meal/meat/side", "meals, meats and sides")}, ${plural(r.templates, "template", "templates")}, ` +
+          `Removed ${plural(r.items, "dish/portioned/side/sweet item", "dishes, portioned items, sides and sweets")}, ${plural(r.templates, "template", "templates")}, ` +
           `${plural(r.ingredients, "ingredient", "ingredients")} and ${plural(r.plan_entries, "planned meal", "planned meals")}.${kept} ` +
           `A backup was saved first: ${backup_path}`,
       });
@@ -89,7 +89,7 @@ export default function DataSection() {
               ? "Checking…"
               : nothingSample
                 ? "No sample data left — everything here is yours."
-                : `Deletes the demo content that came with the app: ${plural(counts.items, "meal/meat/side", "meals, meats and sides")}, ${plural(counts.templates, "template", "templates")} and ${plural(counts.ingredients, "ingredient", "ingredients")}` +
+                : `Deletes the demo content that came with the app: ${plural(counts.items, "dish/portioned/side/sweet item", "dishes, portioned items, sides and sweets")}, ${plural(counts.templates, "template", "templates")} and ${plural(counts.ingredients, "ingredient", "ingredients")}` +
                   (counts.planned_entries
                     ? `, plus ${plural(counts.planned_entries, "planned meal", "planned meals")} that use them`
                     : "") +

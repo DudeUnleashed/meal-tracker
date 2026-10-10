@@ -33,9 +33,13 @@ export const ITEM_TYPES: ItemType[] = ["meal", "meat", "side", "sweet"];
 /** A planned entry can also be the hidden Blank (takeaway etc.) token. */
 export type EntryType = ItemType | "blank";
 
+// NOTE: the stored type values are still "meal" and "meat" (database, backups, summary maths).
+// People see them as "Dish" (a complete dish, fixed amounts) and "Portioned" (quantities are
+// per portion; you pick how many portions each night). Only these labels carry the new names,
+// so old and new backups stay interchangeable. Likewise `serves` is shown as "portions".
 const TYPE_LABELS: Record<EntryType, string> = {
-  meal: "Meal",
-  meat: "Meat",
+  meal: "Dish",
+  meat: "Portioned",
   side: "Side",
   sweet: "Sweet/Savory",
   blank: "Blank",

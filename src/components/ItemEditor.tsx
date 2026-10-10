@@ -282,7 +282,7 @@ export default function ItemEditor({
             <input
               value={draft.name}
               onChange={(e) => update({ name: e.target.value })}
-              placeholder={isMeat ? "e.g. Sausages" : "e.g. Chow mein"}
+              placeholder={isMeat ? "e.g. Sausages (per portion)" : "e.g. Chow mein"}
               className={`${field} text-base text-slate-900`}
             />
           </label>
@@ -368,7 +368,7 @@ export default function ItemEditor({
             <h3 className="text-sm font-semibold">Ingredients</h3>
             <span className="text-xs text-slate-500">
               {isMeat
-                ? "Quantities are per serve — scaled by serves on the calendar"
+                ? "Quantities are per portion — you choose how many portions each night on the calendar"
                 : "Quantities are the fixed amount you cook"}
             </span>
           </div>
@@ -392,7 +392,7 @@ export default function ItemEditor({
                   />
                   <span className="w-20 text-xs text-slate-500">
                     {unitOf(line.ingredient_id)}
-                    {isMeat && unitOf(line.ingredient_id) ? " / serve" : ""}
+                    {isMeat && unitOf(line.ingredient_id) ? " / portion" : ""}
                   </span>
                   <button
                     type="button"
@@ -462,7 +462,7 @@ export default function ItemEditor({
                     <div className="flex items-baseline gap-2">
                       <span>{format(fromIso(h.date), "EEE d MMM yyyy")}</span>
                       {h.serves !== null && (
-                        <span className="text-xs text-slate-500">{h.serves} serves</span>
+                        <span className="text-xs text-slate-500">{h.serves} {h.serves === 1 ? "portion" : "portions"}</span>
                       )}
                       {h.date >= toIso(new Date()) && (
                         <span className="rounded bg-emerald-50 px-1.5 text-xs text-emerald-700">

@@ -116,9 +116,9 @@ export default function SettingsTab() {
           <div className="space-y-3 text-sm">
             <label className="flex items-center justify-between gap-4">
               <span>
-                Default meat serves
+                Default portions
                 <span className="block text-xs text-slate-500">
-                  Serves a meat gets when you drop it on the calendar (adjust per night).
+                  Portions a portioned item gets when you drop it on the calendar (adjust per night).
                 </span>
               </span>
               <input
@@ -127,7 +127,7 @@ export default function SettingsTab() {
                 step="1"
                 value={serves}
                 onChange={(e) => setServes(e.target.value)}
-                onBlur={() => saveSetting("default_meat_serves", serves, "Default serves")}
+                onBlur={() => saveSetting("default_meat_serves", serves, "Default portions")}
                 className={`${field} w-20 text-right`}
               />
             </label>

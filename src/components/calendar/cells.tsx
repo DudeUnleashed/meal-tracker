@@ -351,19 +351,19 @@ export function ChipBody({ entry, onServes, onRemove }: ChipBodyProps) {
                   onServes(entry.serves! - 1);
                 }}
                 disabled={entry.serves <= 1}
-                aria-label="Fewer serves"
+                aria-label="Fewer portions"
                 className="h-4 w-4 rounded bg-slate-200 leading-none hover:bg-slate-300 disabled:opacity-40"
               >
                 −
               </button>
-              <span className="min-w-8 text-center font-medium">{entry.serves} serves</span>
+              <span className="min-w-8 text-center font-medium">{entry.serves} {entry.serves === 1 ? "portion" : "portions"}</span>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onServes(entry.serves! + 1);
                 }}
-                aria-label="More serves"
+                aria-label="More portions"
                 className="h-4 w-4 rounded bg-slate-200 leading-none hover:bg-slate-300"
               >
                 +

@@ -33,7 +33,7 @@ fn validate(key: &str, value: &str) -> Result<(), String> {
         },
         "default_meat_serves" => match value.parse::<u32>() {
             Ok(n) if n >= 1 => Ok(()),
-            _ => Err("default_meat_serves must be a whole number of at least 1".into()),
+            _ => Err("Default portions must be a whole number of at least 1".into()),
         },
         "planner_view" => match value {
             "1w" | "2w" | "month" | "scroll" => Ok(()),
