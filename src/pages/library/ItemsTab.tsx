@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import GroupedItems from "../../components/GroupedItems";
 import ItemEditor from "../../components/ItemEditor";
 import {
   api,
@@ -101,29 +102,34 @@ export default function ItemsTab({ ingredients, categories, onIngredientCreated 
             </button>
           </div>
         </div>
-        <ul className="flex-1 overflow-auto">
-          {items.map((it) => (
-            <li key={it.id}>
-              <button
-                onClick={() => select(it.id)}
-                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
-                  selection === it.id ? "bg-emerald-50" : "hover:bg-slate-50"
-                } ${it.archived ? "opacity-50" : ""}`}
-              >
-                <span
-                  className="h-3 w-3 shrink-0 rounded-full border border-slate-300"
-                  style={{ background: it.colour ?? "transparent" }}
-                />
-                <span className="flex-1 truncate">{it.name}</span>
-                {it.live_template_id !== null && (
-                  <span title="Template" className="text-xs">
-                    🧩
-                  </span>
-                )}
-                <span className="text-xs text-slate-400">{typeLabel(it.type)}</span>
-              </button>
-            </li>
-          ))}
+        <ul className="flex-1 space-y-0.5 overflow-auto p-1">
+          <GroupedItems
+            items={items}
+            grouped={!searching}
+            storageKey="library"
+            renderItem={(it, scope) => (
+              <li key={`${scope}:${it.id}`}>
+                <button
+                  onClick={() => select(it.id)}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                    selection === it.id ? "bg-emerald-50" : "hover:bg-slate-50"
+                  } ${it.archived ? "opacity-50" : ""}`}
+                >
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-full border border-slate-300"
+                    style={{ background: it.colour ?? "transparent" }}
+                  />
+                  <span className="flex-1 truncate">{it.name}</span>
+                  {it.live_template_id !== null && (
+                    <span title="Template" className="text-xs">
+                      🧩
+                    </span>
+                  )}
+                  <span className="text-xs text-slate-400">{typeLabel(it.type)}</span>
+                </button>
+              </li>
+            )}
+          />
           {items.length === 0 && (
             <li className="p-4 text-sm text-slate-400">{error ?? "No items found."}</li>
           )}

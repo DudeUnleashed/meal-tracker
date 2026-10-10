@@ -290,7 +290,7 @@ fn sweet_savory_items_default_to_the_snack_slot() {
             colour: None,
             notes: None,
             template_id: None,
-            lines: vec![super::items::LineInput { ingredient_id: butter, quantity: 125.0 }],
+            lines: vec![super::items::LineInput { ingredient_id: butter, quantity: 125.0, group_by: false }],
         },
     )
     .unwrap();
@@ -575,4 +575,67 @@ fn real_backup_imports_and_works() {
         format!("{:?}", plan::list(&conn, "2000-01-01", "2100-01-01").unwrap()),
         format!("{:?}", plan::list(&again, "2000-01-01", "2100-01-01").unwrap())
     );
+}
+
+// ---- grouping dishes by a ticked ingredient --------------------------------------------------
+
+fn dish_with_ticks(conn: &mut Connection, name: &str, ticked: &[&str], others: &[&str]) -> super::items::Item {
+    let line = |n: &str, tick: bool| super::items::LineInput { ingredient_id: ing(conn, n), quantity: 1.0, group_by: tick };
+    let mut lines: Vec<_> = ticked.iter().map(|n| line(n, true)).collect();
+    lines.extend(others.iter().map(|n| line(n, false)));
+    super::items::create(
+        conn,
+        &super::items::ItemInput { name: name.into(), item_type: "meal".into(), colour: None, notes: None, template_id: None, lines },
+    )
+    .unwrap()
+}
+
+#[test]
+fn only_hand_ticked_ingredients_group_a_dish() {
+    let mut conn = test_conn();
+    // Beef is ticked; bacon is in the recipe but is not what the dish is "about".
+    let rissoles = dish_with_ticks(&mut conn, "Beef rissoles", &["Beef mince"], &["Bacon", "Onion"]);
+    let carbonara = dish_with_ticks(&mut conn, "Carbonara", &[], &["Bacon", "Spaghetti"]);
+
+    assert_eq!(rissoles.lines.iter().filter(|l| l.group_by).count(), 1);
+    let all = super::items::list(&conn, None, None, false).unwrap();
+    let tags = |id: i64| all.iter().find(|i| i.id == id).unwrap().groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>();
+    assert_eq!(tags(rissoles.id), ["Beef mince"]);
+    assert!(tags(carbonara.id).is_empty(), "nothing is grouped automatically");
+    // Untouched items (and the sample data) stay ungrouped.
+    assert!(all.iter().filter(|i| !i.groups.is_empty()).count() == 1);
+
+    // Editing replaces the ticks; duplicating keeps them.
+    let copy = super::items::duplicate(&mut conn, rissoles.id).unwrap();
+    assert!(copy.lines.iter().any(|l| l.group_by && l.ingredient_name == "Beef mince"));
+    let line = |n: &str, tick: bool| super::items::LineInput { ingredient_id: ing(&conn, n), quantity: 1.0, group_by: tick };
+    let edited = super::items::ItemInput {
+        name: "Beef rissoles".into(),
+        item_type: "meal".into(),
+        colour: None,
+        notes: None,
+        template_id: None,
+        lines: vec![line("Beef mince", false), line("Onion", true)],
+    };
+    let updated = super::items::update(&mut conn, rissoles.id, &edited).unwrap();
+    assert_eq!(updated.lines.iter().filter(|l| l.group_by).map(|l| l.ingredient_name.as_str()).collect::<Vec<_>>(), ["Onion"]);
+}
+
+#[test]
+fn ticks_survive_a_backup_and_old_backups_import_with_none() {
+    let mut source = test_conn();
+    dish_with_ticks(&mut source, "Beef rissoles", &["Beef mince"], &["Onion"]);
+    let json = backup::export_json(&source).unwrap();
+    let target = test_conn();
+    backup::import_json(&target, &json).unwrap();
+    assert_eq!(count(&target, "SELECT COUNT(*) FROM item_ingredient WHERE group_by = 1"), 1);
+
+    // A backup written before grouping existed has no such field anywhere.
+    let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    for l in v["item_ingredients"].as_array_mut().unwrap() {
+        l.as_object_mut().unwrap().remove("group_by");
+    }
+    let older = test_conn();
+    backup::import_json(&older, &v.to_string()).unwrap();
+    assert_eq!(count(&older, "SELECT COUNT(*) FROM item_ingredient WHERE group_by = 1"), 0);
 }

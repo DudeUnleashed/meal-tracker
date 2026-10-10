@@ -199,8 +199,8 @@ mod tests {
             notes: None,
             template_id: None,
             lines: vec![
-                items::LineInput { ingredient_id: mince, quantity: 400.0 },
-                items::LineInput { ingredient_id: leek, quantity: 2.0 },
+                items::LineInput { ingredient_id: mince, quantity: 400.0, group_by: false },
+                items::LineInput { ingredient_id: leek, quantity: 2.0, group_by: false },
             ],
         };
         let pie = items::create(&mut conn, &input).unwrap();

@@ -105,6 +105,9 @@ struct ItemIngredientRow {
     ingredient_id: i64,
     quantity: f64,
     position: i64,
+    /// Absent in backups made before dishes could be grouped by an ingredient.
+    #[serde(default)]
+    group_by: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -280,7 +283,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
         )?,
         item_ingredients: rows(
             conn,
-            "SELECT id, item_id, ingredient_id, quantity, position FROM item_ingredient ORDER BY id",
+            "SELECT id, item_id, ingredient_id, quantity, position, group_by FROM item_ingredient ORDER BY id",
             |r| {
                 Ok(ItemIngredientRow {
                     id: r.get(0)?,
@@ -288,6 +291,7 @@ fn collect(conn: &Connection) -> Result<Backup, String> {
                     ingredient_id: r.get(2)?,
                     quantity: r.get(3)?,
                     position: r.get(4)?,
+                    group_by: r.get::<_, i64>(5)? != 0,
                 })
             },
         )?,
@@ -410,9 +414,9 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<ImportSummary, Strin
     }
     for l in &b.item_ingredients {
         tx.execute(
-            "INSERT INTO item_ingredient (id, item_id, ingredient_id, quantity, position)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![l.id, l.item_id, l.ingredient_id, l.quantity, l.position],
+            "INSERT INTO item_ingredient (id, item_id, ingredient_id, quantity, position, group_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![l.id, l.item_id, l.ingredient_id, l.quantity, l.position, l.group_by],
         )
         .map_err(|e| err("item ingredients", e))?;
     }

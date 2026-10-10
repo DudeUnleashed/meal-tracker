@@ -19,6 +19,14 @@ pub struct ItemSummary {
     pub ingredient_count: i64,
     /// Set for a template's chip: it is edited in Library → Templates.
     pub live_template_id: Option<i64>,
+    /// Ingredients this dish is grouped under in the library lists (ticked by hand).
+    pub groups: Vec<GroupTag>,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct GroupTag {
+    pub ingredient_id: i64,
+    pub name: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -28,6 +36,8 @@ pub struct ItemLine {
     pub unit: String,
     /// Per serve for meat items; the fixed amount otherwise.
     pub quantity: f64,
+    /// Ticked: the dish is listed under this ingredient in the library.
+    pub group_by: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -49,6 +59,8 @@ pub struct Item {
 pub struct LineInput {
     pub ingredient_id: i64,
     pub quantity: f64,
+    #[serde(default)]
+    pub group_by: bool,
 }
 
 #[derive(Deserialize)]
@@ -101,7 +113,7 @@ pub fn list(
              ORDER BY i.name COLLATE NOCASE",
         )
         .map_err(|e| e.to_string())?;
-    let rows = stmt
+    let mut rows = stmt
         .query_map(params![item_type, search, include_archived], |r| {
             Ok(ItemSummary {
                 id: r.get(0)?,
@@ -111,11 +123,30 @@ pub fn list(
                 archived: r.get::<_, i64>(4)? != 0,
                 ingredient_count: r.get(5)?,
                 live_template_id: r.get(6)?,
+                groups: vec![],
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT ii.item_id, g.id, g.name FROM item_ingredient ii
+             JOIN ingredient g ON g.id = ii.ingredient_id
+             WHERE ii.group_by = 1 ORDER BY g.name COLLATE NOCASE",
+        )
+        .map_err(|e| e.to_string())?;
+    let tags = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, GroupTag { ingredient_id: r.get(1)?, name: r.get(2)? })))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    for (item_id, tag) in tags {
+        if let Some(row) = rows.iter_mut().find(|r| r.id == item_id) {
+            row.groups.push(tag);
+        }
+    }
     Ok(rows)
 }
 
@@ -147,7 +178,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Item, String> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT ii.ingredient_id, g.name, g.unit, ii.quantity
+            "SELECT ii.ingredient_id, g.name, g.unit, ii.quantity, ii.group_by
              FROM item_ingredient ii
              JOIN ingredient g ON g.id = ii.ingredient_id
              WHERE ii.item_id = ?1
@@ -161,6 +192,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Item, String> {
                 ingredient_name: r.get(1)?,
                 unit: r.get(2)?,
                 quantity: r.get(3)?,
+                group_by: r.get::<_, i64>(4)? != 0,
             })
         })
         .map_err(|e| e.to_string())?
@@ -172,9 +204,9 @@ pub fn get(conn: &Connection, id: i64) -> Result<Item, String> {
 fn write_lines(conn: &Connection, item_id: i64, lines: &[LineInput]) -> Result<(), String> {
     for (pos, l) in lines.iter().enumerate() {
         conn.execute(
-            "INSERT INTO item_ingredient (item_id, ingredient_id, quantity, position)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![item_id, l.ingredient_id, l.quantity, pos as i64],
+            "INSERT INTO item_ingredient (item_id, ingredient_id, quantity, position, group_by)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![item_id, l.ingredient_id, l.quantity, pos as i64, l.group_by],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -267,7 +299,7 @@ pub fn duplicate(conn: &mut Connection, id: i64) -> Result<Item, String> {
         lines: src
             .lines
             .iter()
-            .map(|l| LineInput { ingredient_id: l.ingredient_id, quantity: l.quantity })
+            .map(|l| LineInput { ingredient_id: l.ingredient_id, quantity: l.quantity, group_by: l.group_by })
             .collect(),
     };
     create(conn, &input)
@@ -343,8 +375,8 @@ mod tests {
             notes: None,
             template_id: None,
             lines: vec![
-                LineInput { ingredient_id: ingredient_id(conn, "Pork mince"), quantity: 500.0 },
-                LineInput { ingredient_id: ingredient_id(conn, "Onion"), quantity: 1.0 },
+                LineInput { ingredient_id: ingredient_id(conn, "Pork mince"), quantity: 500.0, group_by: false },
+                LineInput { ingredient_id: ingredient_id(conn, "Onion"), quantity: 1.0, group_by: false },
             ],
         }
     }
@@ -395,7 +427,7 @@ mod tests {
             colour: it.colour,
             notes: it.notes,
             template_id: None,
-            lines: it.lines.iter().map(|l| LineInput { ingredient_id: l.ingredient_id, quantity: l.quantity }).collect(),
+            lines: it.lines.iter().map(|l| LineInput { ingredient_id: l.ingredient_id, quantity: l.quantity, group_by: l.group_by }).collect(),
         }
     }
 

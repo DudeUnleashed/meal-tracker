@@ -23,6 +23,8 @@ interface Line {
   key: number;
   ingredient_id: number | null;
   quantity: string;
+  /** Ticked: list this dish under the ingredient in the library. */
+  group_by: boolean;
 }
 
 interface Draft {
@@ -68,6 +70,7 @@ function toDraft(item: Item): Draft {
       key: nextKey++,
       ingredient_id: l.ingredient_id,
       quantity: String(l.quantity),
+      group_by: l.group_by,
     })),
   };
 }
@@ -79,7 +82,7 @@ function blankDraft(type: ItemType): Draft {
     colour: DEFAULT_COLOURS[type],
     notes: "",
     template_id: null,
-    lines: [{ key: nextKey++, ingredient_id: null, quantity: "" }],
+    lines: [{ key: nextKey++, ingredient_id: null, quantity: "", group_by: false }],
   };
 }
 
@@ -179,6 +182,7 @@ export default function ItemEditor({
         key: nextKey++,
         ingredient_id: l.ingredient_id,
         quantity: l.quantity === null ? "" : String(l.quantity),
+        group_by: false,
       })),
     });
     setFromTemplate(templateName);
@@ -191,7 +195,7 @@ export default function ItemEditor({
       setError("Give the item a name");
       return null;
     }
-    const lines: { ingredient_id: number; quantity: number }[] = [];
+    const lines: { ingredient_id: number; quantity: number; group_by: boolean }[] = [];
     for (const l of draft.lines) {
       if (l.ingredient_id === null && l.quantity.trim() === "") continue; // untouched blank row
       if (l.ingredient_id === null) {
@@ -204,7 +208,7 @@ export default function ItemEditor({
         setError(`${name}: ${parsed.error}`);
         return null;
       }
-      lines.push({ ingredient_id: l.ingredient_id, quantity: parsed.value });
+      lines.push({ ingredient_id: l.ingredient_id, quantity: parsed.value, group_by: l.group_by });
     }
     return {
       name: draft.name,
@@ -370,6 +374,7 @@ export default function ItemEditor({
               {isMeat
                 ? "Quantities are per portion — you choose how many portions each night on the calendar"
                 : "Quantities are the fixed amount you cook"}
+              {" · "}Tick <b>Group</b> on the main ingredient to file this dish under it in the lists
             </span>
           </div>
 
@@ -394,6 +399,18 @@ export default function ItemEditor({
                     {unitOf(line.ingredient_id)}
                     {isMeat && unitOf(line.ingredient_id) ? " / portion" : ""}
                   </span>
+                  <label
+                    title="Tick to list this dish under this ingredient in the library (e.g. tick Beef mince on Beef rissoles)"
+                    className="flex items-center gap-1 text-xs text-slate-500"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={line.group_by}
+                      disabled={line.ingredient_id === null}
+                      onChange={(e) => updateLine(line.key, { group_by: e.target.checked })}
+                    />
+                    Group
+                  </label>
                   <button
                     type="button"
                     onClick={() => moveLine(index, -1)}
@@ -442,7 +459,7 @@ export default function ItemEditor({
           <button
             type="button"
             onClick={() =>
-              update({ lines: [...draft.lines, { key: nextKey++, ingredient_id: null, quantity: "" }] })
+              update({ lines: [...draft.lines, { key: nextKey++, ingredient_id: null, quantity: "", group_by: false }] })
             }
             className="mt-2 text-sm font-medium text-emerald-700 hover:underline"
           >

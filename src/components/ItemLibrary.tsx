@@ -12,6 +12,7 @@ import { fromIso, toIso } from "../lib/dates";
 import { lastHadText, plannedText } from "../lib/relative";
 import { pickSuggestions } from "../lib/suggest";
 import type { DragData } from "./calendar/actions";
+import GroupedItems from "./GroupedItems";
 
 type Sort = "name" | "least-recent";
 
@@ -99,9 +100,14 @@ export default function ItemLibrary({ refreshKey }: Props) {
         </label>
       </div>
       <ul className="flex-1 space-y-1.5 overflow-auto p-3">
-        {shown.map((item) => (
-          <LibraryCard key={item.id} item={item} usage={usage[item.id]} />
-        ))}
+        <GroupedItems
+          items={shown}
+          grouped={q === ""}
+          storageKey="planner"
+          renderItem={(item, scope) => (
+            <LibraryCard key={`${scope}:${item.id}`} scope={scope} item={item} usage={usage[item.id]} />
+          )}
+        />
         {shown.length === 0 && (
           <li className="text-sm text-slate-400">{error ?? "No items — add some in the Library."}</li>
         )}
@@ -203,9 +209,12 @@ export function LeftoversPreview() {
 function LibraryCard({
   item,
   usage,
+  scope,
 }: {
   item: ItemSummary;
   usage: ItemUsage | undefined;
+  /** Which fold the card sits in; a dish can appear in two, and dnd ids must be unique. */
+  scope: string;
 }) {
   const data: DragData = {
     kind: "item",
@@ -215,7 +224,7 @@ function LibraryCard({
     template: item.live_template_id !== null,
   };
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
-    id: `item:${item.id}`,
+    id: `item:${scope}:${item.id}`,
     data,
   });
 

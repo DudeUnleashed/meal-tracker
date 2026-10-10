@@ -61,7 +61,7 @@ describe("parseQuantity", () => {
 });
 
 const item = (id: number, name: string, type: ItemType, archived = false): ItemSummary => ({
-  id, name, type, colour: null, archived, ingredient_count: 1, live_template_id: null,
+  id, name, type, colour: null, archived, ingredient_count: 1, live_template_id: null, groups: [],
 });
 const used = (lastHad: string | null, nextPlanned: string | null = null): ItemUsage => ({
   item_id: 0, last_had: lastHad, next_planned: nextPlanned, latest_note: null, latest_note_date: null,

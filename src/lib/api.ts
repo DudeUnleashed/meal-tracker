@@ -66,6 +66,13 @@ export interface ItemSummary {
   ingredient_count: number;
   /** Set for a template's chip: edited in Library → Templates. */
   live_template_id: number | null;
+  /** Ingredients ticked "group by" on the recipe: the dish is listed under each of these. */
+  groups: GroupTag[];
+}
+
+export interface GroupTag {
+  ingredient_id: number;
+  name: string;
 }
 
 export interface ItemLine {
@@ -74,6 +81,8 @@ export interface ItemLine {
   unit: Unit;
   /** Per serve for meat items; the fixed amount otherwise. */
   quantity: number;
+  /** Ticked by hand: list the dish under this ingredient in the library. */
+  group_by: boolean;
 }
 
 export interface Item {
@@ -94,7 +103,7 @@ export interface ItemInput {
   colour: string | null;
   notes: string | null;
   template_id: number | null;
-  lines: { ingredient_id: number; quantity: number }[];
+  lines: { ingredient_id: number; quantity: number; group_by: boolean }[];
 }
 
 export interface SummarySource {

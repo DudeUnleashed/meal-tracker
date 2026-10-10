@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 
 pub struct Db(pub Mutex<Connection>);
 
-const LATEST_VERSION: usize = 4;
+const LATEST_VERSION: usize = 5;
 
 pub(crate) fn migrations() -> Migrations<'static> {
     Migrations::new(vec![
@@ -15,6 +15,7 @@ pub(crate) fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/002_seed.sql")),
         M::up(include_str!("../migrations/003_day_info_scale_sample.sql")),
         M::up(include_str!("../migrations/004_slots_live_templates.sql")),
+        M::up(include_str!("../migrations/005_group_by.sql")),
     ])
 }
 
