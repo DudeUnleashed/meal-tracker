@@ -5,6 +5,7 @@ import {
   api,
   errorMessage,
   ITEM_TYPES,
+  typeLabel,
   type HistoryEntry,
   type Ingredient,
   type IngredientCategory,
@@ -51,6 +52,7 @@ const DEFAULT_COLOURS: Record<ItemType, string> = {
   meal: "#f59e0b",
   meat: "#b91c1c",
   side: "#16a34a",
+  sweet: "#ec4899",
 };
 
 let nextKey = 1;
@@ -253,6 +255,18 @@ export default function ItemEditor({
   const isMeat = draft.type === "meat";
   const field = "w-full rounded border border-slate-300 px-2 py-1 text-sm";
 
+  // A template's chip is generated from the template, so it is edited there.
+  if (item?.live_template_id) {
+    return (
+      <div className="space-y-2 p-4 text-sm">
+        <p className="rounded bg-emerald-50 px-3 py-2 text-emerald-900">
+          🧩 <b>{item.name}</b> is a template. Its always-included ingredients and the choices you
+          make each night are set up in <b>Library → Templates</b>.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 space-y-4 overflow-auto p-4">
@@ -277,11 +291,11 @@ export default function ItemEditor({
             <select
               value={draft.type}
               onChange={(e) => update({ type: e.target.value as ItemType })}
-              className={`${field} capitalize text-slate-900`}
+              className={`${field} text-slate-900`}
             >
               {ITEM_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {typeLabel(t)}
                 </option>
               ))}
             </select>

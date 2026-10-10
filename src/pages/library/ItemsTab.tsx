@@ -3,6 +3,7 @@ import ItemEditor from "../../components/ItemEditor";
 import {
   api,
   ITEM_TYPES,
+  typeLabel,
   type Ingredient,
   type IngredientCategory,
   type ItemSummary,
@@ -64,13 +65,13 @@ export default function ItemsTab({ ingredients, categories, onIngredientCreated 
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`flex-1 rounded px-2 py-1 text-xs font-medium capitalize ${
+                className={`flex-1 rounded px-2 py-1 text-xs font-medium ${
                   filter === f
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
-                {f}
+                {f === "all" ? "All" : typeLabel(f)}
               </button>
             ))}
           </div>
@@ -111,7 +112,12 @@ export default function ItemsTab({ ingredients, categories, onIngredientCreated 
                   style={{ background: it.colour ?? "transparent" }}
                 />
                 <span className="flex-1 truncate">{it.name}</span>
-                <span className="text-xs capitalize text-slate-400">{it.type}</span>
+                {it.live_template_id !== null && (
+                  <span title="Template" className="text-xs">
+                    🧩
+                  </span>
+                )}
+                <span className="text-xs text-slate-400">{typeLabel(it.type)}</span>
               </button>
             </li>
           ))}

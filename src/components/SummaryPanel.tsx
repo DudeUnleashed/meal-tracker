@@ -162,7 +162,7 @@ export default function SummaryPanel({
         )}
         {summary && !invalidRange && (
           <p className="text-xs text-slate-500">
-            {summary.dinner_days} {summary.dinner_days === 1 ? "dinner" : "dinners"},{" "}
+            {summary.dinner_days} {summary.dinner_days === 1 ? "day" : "days"} planned,{" "}
             {summary.entry_count} {summary.entry_count === 1 ? "item" : "items"}
             {summary.rows.length > 0 && ` · ${remaining} of ${summary.rows.length} still to buy`}
           </p>

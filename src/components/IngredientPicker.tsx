@@ -6,7 +6,7 @@ interface Props {
   value: number | null;
   onChange: (ingredient: Ingredient) => void;
   /** Called with the current search text when the user wants to create a new ingredient. */
-  onCreate: (name: string) => void;
+  onCreate?: (name: string) => void;
   /** Only offer ingredients from this category (template slots, e.g. Protein → Meat). */
   categoryId?: number | null;
 }
@@ -70,7 +70,7 @@ export default function IngredientPicker({ ingredients, value, onChange, onCreat
             </li>
           ))}
           {matches.length === 0 && <li className="px-2 py-1 text-slate-400">No matches</li>}
-          {q && !exact && (
+          {onCreate && q && !exact && (
             <li>
               <button
                 type="button"

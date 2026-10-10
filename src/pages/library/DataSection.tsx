@@ -39,7 +39,7 @@ export default function DataSection() {
         ok: true,
         text:
           `Removed ${plural(r.items, "meal/meat/side", "meals, meats and sides")}, ${plural(r.templates, "template", "templates")}, ` +
-          `${plural(r.ingredients, "ingredient", "ingredients")} and ${plural(r.plan_entries, "planned dinner", "planned dinners")}.${kept} ` +
+          `${plural(r.ingredients, "ingredient", "ingredients")} and ${plural(r.plan_entries, "planned meal", "planned meals")}.${kept} ` +
           `A backup was saved first: ${backup_path}`,
       });
     } catch (e) {
@@ -59,7 +59,7 @@ export default function DataSection() {
         ok: true,
         text:
           `Erased ${plural(r.items, "item", "items")}, ${plural(r.ingredients, "ingredient", "ingredients")}, ` +
-          `${plural(r.templates, "template", "templates")}, ${plural(r.plan_entries, "planned dinner", "planned dinners")} ` +
+          `${plural(r.templates, "template", "templates")}, ${plural(r.plan_entries, "planned meal", "planned meals")} ` +
           `and ${plural(r.day_notes, "day note", "day notes")}. A backup was saved first: ${backup_path}`,
       });
     } catch (e) {
@@ -91,7 +91,7 @@ export default function DataSection() {
                 ? "No sample data left — everything here is yours."
                 : `Deletes the demo content that came with the app: ${plural(counts.items, "meal/meat/side", "meals, meats and sides")}, ${plural(counts.templates, "template", "templates")} and ${plural(counts.ingredients, "ingredient", "ingredients")}` +
                   (counts.planned_entries
-                    ? `, plus ${plural(counts.planned_entries, "planned dinner", "planned dinners")} that use them`
+                    ? `, plus ${plural(counts.planned_entries, "planned meal", "planned meals")} that use them`
                     : "") +
                   ". Anything you made yourself stays."}
           </p>
@@ -122,7 +122,7 @@ export default function DataSection() {
         <div className="border-t border-slate-100 pt-4">
           <div className="font-medium text-red-700">Erase everything</div>
           <p className="mb-2 text-xs text-slate-500">
-            Deletes every meal, ingredient, template, planned dinner and day note — including your own.
+            Deletes every meal, ingredient, template, planned meal and day note — including your own.
             Settings and the ingredient categories stay.
           </p>
           {pending === "erase" ? (

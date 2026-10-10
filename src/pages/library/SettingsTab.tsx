@@ -89,7 +89,7 @@ export default function SettingsTab() {
       const r = await api.backup.import(path);
       setBackupMessage({
         ok: true,
-        text: `Restored ${r.items} items, ${r.ingredients} ingredients, ${r.templates} templates and ${r.plan_entries} planned dinners. Reloading…`,
+        text: `Restored ${r.items} items, ${r.ingredients} ingredients, ${r.templates} templates and ${r.plan_entries} planned meals. Reloading…`,
       });
       // Every screen cached the old data; start fresh.
       setTimeout(() => window.location.reload(), 1200);

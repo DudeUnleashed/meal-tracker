@@ -98,7 +98,7 @@ export default function Calendar({
           {(view === "1w" || view === "2w") && (
             <button
               onClick={onCopyPrevious}
-              title={`Copy the dinners from the previous ${view === "1w" ? "week" : "2 weeks"} into this block`}
+              title={`Copy the meals from the previous ${view === "1w" ? "week" : "2 weeks"} into this block`}
               className="whitespace-nowrap rounded border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
             >
               Copy {view === "1w" ? "last week" : "last fortnight"}

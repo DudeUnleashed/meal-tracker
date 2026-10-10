@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { format } from "date-fns";
-import type { DayInfo, PlanEntry } from "../../lib/api";
+import { SLOTS, SLOT_LABELS, type DayInfo, type PlanEntry, type Slot } from "../../lib/api";
 import { daysOfWeek, fromIso } from "../../lib/dates";
 import { usePlannerActions, type DragData } from "./actions";
 
@@ -82,9 +83,14 @@ export function DayCell({ date, today, entries, info, outsideMonth, compact }: D
   const isPast = date < today;
   // Show the month on the 1st so the boundary is easy to spot.
   const dayLabel = d.getDate() === 1 ? format(d, "d MMM") : format(d, "d");
-  const { openDay } = usePlannerActions();
+  const { openDay, openSlots, showSlot } = usePlannerActions();
 
-  const data: DragData = { kind: "day", date, count: entries.length };
+  const inSlot = (slot: Slot) => entries.filter((e) => e.slot === slot);
+  // Dinner is always there; the other parts of the day appear once used or added.
+  const shown = SLOTS.filter((s) => s === "dinner" || inSlot(s).length > 0 || openSlots[date]?.includes(s));
+  const addable = SLOTS.filter((s) => !shown.includes(s));
+
+  const data: DragData = { kind: "day", date };
   const { setNodeRef, isOver } = useDroppable({ id: `day:${date}`, data });
 
   return (
@@ -100,19 +106,31 @@ export function DayCell({ date, today, entries, info, outsideMonth, compact }: D
       {/* Dim past / out-of-month days' content but keep the drop highlight crisp. */}
       <div className={isPast || outsideMonth ? "opacity-60" : ""}>
         <div className="mb-1 flex items-center justify-between gap-1">
-          {!info?.note ? (
-            <button
-              type="button"
-              onClick={(e) => openDay(date, e.currentTarget.getBoundingClientRect())}
-              title="Add a note for this day"
-              aria-label={`Add a note for ${date}`}
-              className="rounded px-1 text-xs text-slate-400 opacity-0 hover:bg-slate-100 hover:text-slate-700 focus:opacity-100 group-hover:opacity-100"
-            >
-              ＋ note
-            </button>
-          ) : (
-            <span />
-          )}
+          <div className="flex flex-wrap gap-x-0.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100">
+            {!info?.note && (
+              <button
+                type="button"
+                onClick={(e) => openDay(date, e.currentTarget.getBoundingClientRect())}
+                title="Add a note for this day"
+                aria-label={`Add a note for ${date}`}
+                className="rounded px-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                ＋ note
+              </button>
+            )}
+            {addable.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => showSlot(date, s)}
+                title={`Add ${SLOT_LABELS[s].toLowerCase()} to this day`}
+                aria-label={`Add ${SLOT_LABELS[s].toLowerCase()} on ${date}`}
+                className="rounded px-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                ＋ {SLOT_LABELS[s].toLowerCase()}
+              </button>
+            ))}
+          </div>
           <span
             className={`text-xs ${
               isToday
@@ -136,12 +154,51 @@ export function DayCell({ date, today, entries, info, outsideMonth, compact }: D
         )}
 
         <div className="space-y-1">
-          {info?.leftovers && <LeftoversChip date={date} />}
-          {entries.map((e, i) => (
-            <EntryChip key={e.id} entry={e} index={i} />
+          {shown.map((slot) => (
+            <SlotZone key={slot} date={date} slot={slot} entries={inSlot(slot)} labelled={shown.length > 1}>
+              {slot === "dinner" && info?.leftovers && <LeftoversChip date={date} />}
+            </SlotZone>
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** One part of a day: a drop target holding its own chips, with a heading when the day has several. */
+function SlotZone({
+  date,
+  slot,
+  entries,
+  labelled,
+  children,
+}: {
+  date: string;
+  slot: Slot;
+  entries: PlanEntry[];
+  labelled: boolean;
+  children?: ReactNode;
+}) {
+  const data: DragData = { kind: "slot", date, slot, count: entries.length };
+  const { setNodeRef, isOver } = useDroppable({ id: `slot:${date}:${slot}`, data });
+  const empty = entries.length === 0 && !children;
+  return (
+    <div
+      ref={setNodeRef}
+      data-slot={slot}
+      className={`space-y-1 rounded ${isOver ? "ring-2 ring-inset ring-emerald-400" : ""} ${
+        empty && slot !== "dinner" ? "min-h-6 border border-dashed border-slate-200" : ""
+      }`}
+    >
+      {labelled && (
+        <div className="px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          {SLOT_LABELS[slot]}
+        </div>
+      )}
+      {children}
+      {entries.map((e, i) => (
+        <EntryChip key={e.id} entry={e} index={i} />
+      ))}
     </div>
   );
 }
@@ -189,13 +246,14 @@ export function LeftoversBody({ onRemove }: { onRemove?: () => void }) {
 
 /** A planned entry: draggable to another day / position, and a drop target for reordering. */
 function EntryChip({ entry, index }: { entry: PlanEntry; index: number }) {
-  const data: DragData = { kind: "entry", entryId: entry.id, date: entry.date, index, entry };
+  const data: DragData = { kind: "entry", entryId: entry.id, date: entry.date, slot: entry.slot, index, entry };
   const drag = useDraggable({ id: `entry:${entry.id}`, data });
   const drop = useDroppable({ id: `entry-drop:${entry.id}`, data });
   const { changeServes, removeEntry, openEntry } = usePlannerActions();
 
   return (
     <div
+      data-entry={entry.id}
       ref={(node) => {
         drag.setNodeRef(node);
         drop.setNodeRef(node);
@@ -226,16 +284,25 @@ interface ChipBodyProps {
 
 export function ChipBody({ entry, onServes, onRemove }: ChipBodyProps) {
   const colour = entry.item_colour ?? "#94a3b8";
-  const sized = entry.item_type !== "meat" && Math.abs(entry.scale - 1) > 1e-9;
+  const blank = entry.item_type === "blank";
+  const sized = entry.item_type !== "meat" && entry.item_type !== "blank" && Math.abs(entry.scale - 1) > 1e-9;
+  const title = blank ? (entry.label ?? "Blank — click to say what") : entry.item_name;
   return (
     <div
-      className="group cursor-grab rounded border-l-4 bg-slate-50 px-1.5 py-1 text-xs shadow-sm"
-      style={{ borderLeftColor: colour }}
-      title={entry.item_name}
+      className={`group cursor-grab rounded px-1.5 py-1 text-xs shadow-sm ${
+        blank ? "border border-dashed border-slate-400 bg-slate-100" : "border-l-4 bg-slate-50"
+      }`}
+      style={blank ? undefined : { borderLeftColor: colour }}
+      title={title}
     >
       <div className="flex items-center gap-1">
-        <span className={`flex-1 truncate ${entry.item_archived ? "italic text-slate-500" : ""}`}>
-          {entry.item_name}
+        <span
+          className={`flex-1 truncate ${entry.item_archived ? "italic text-slate-500" : ""} ${
+            blank && !entry.label ? "italic text-slate-400" : ""
+          }`}
+        >
+          {blank && "🥡 "}
+          {title}
         </span>
         {sized && (
           <span
@@ -265,6 +332,14 @@ export function ChipBody({ entry, onServes, onRemove }: ChipBodyProps) {
           </button>
         )}
       </div>
+      {entry.template_id !== null && (
+        <div
+          className={`truncate ${entry.picks.length ? "text-slate-500" : "italic text-amber-700"}`}
+          title={entry.picks.map((p) => p.ingredient_name).join(", ")}
+        >
+          {entry.picks.length ? entry.picks.map((p) => p.ingredient_name.toLowerCase()).join(" · ") : "click to choose…"}
+        </div>
+      )}
       {entry.serves !== null && (
         <div className="mt-0.5 flex items-center gap-1 text-slate-600">
           {onServes ? (

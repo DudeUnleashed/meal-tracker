@@ -11,7 +11,10 @@ import {
   type IngredientCategory,
   type Template,
   type TemplateSummary,
+  type TemplateType,
   type Unit,
+  TEMPLATE_TYPES,
+  typeLabel,
 } from "../../lib/api";
 
 interface Props {
@@ -23,7 +26,10 @@ interface Props {
 // null = nothing selected, "new" = creating, number = editing that template.
 type Selection = number | "new" | null;
 
-/** Templates are meal skeletons: fixed lines plus slots to fill. Most meals won't use one. */
+/**
+ * Templates are reusable chips with choices: fixed ingredients that are always there, plus slots
+ * (e.g. "Veg", "Protein") whose ingredients you pick for each night on the planner.
+ */
 export default function TemplatesTab({ ingredients, categories, onIngredientCreated }: Props) {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [selection, setSelection] = useState<Selection>(null);
@@ -51,7 +57,7 @@ export default function TemplatesTab({ ingredients, categories, onIngredientCrea
     <div className="flex h-full min-h-0">
       <aside className="flex w-72 flex-col border-r border-slate-200 bg-white">
         <div className="flex items-center justify-between border-b border-slate-200 p-3">
-          <span className="text-sm font-semibold">Meal templates</span>
+          <span className="text-sm font-semibold">Templates</span>
           <button
             onClick={() => select("new")}
             className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
@@ -68,9 +74,11 @@ export default function TemplatesTab({ ingredients, categories, onIngredientCrea
                   selection === t.id ? "bg-emerald-50" : "hover:bg-slate-50"
                 }`}
               >
-                <div>{t.name}</div>
+                <div>
+                  🧩 {t.name} <span className="text-xs text-slate-400">· {typeLabel(t.item_type)}</span>
+                </div>
                 <div className="text-xs text-slate-400">
-                  {t.fixed_count} fixed · {t.slot_count} {t.slot_count === 1 ? "slot" : "slots"}
+                  {t.fixed_count} fixed · {t.slot_count} {t.slot_count === 1 ? "choice" : "choices"}
                 </div>
               </button>
             </li>
@@ -80,7 +88,8 @@ export default function TemplatesTab({ ingredients, categories, onIngredientCrea
           )}
         </ul>
         <p className="border-t border-slate-100 p-3 text-xs text-slate-400">
-          Use a template from the meal editor with “Start from template”.
+          Each template appears in the planner’s library with a 🧩. Drag it onto a day, then pick its
+          ingredients for that night. (Meals can still be started from a template in the meal editor.)
         </p>
       </aside>
 
@@ -114,18 +123,30 @@ export default function TemplatesTab({ ingredients, categories, onIngredientCrea
   );
 }
 
+interface Option {
+  key: number;
+  ingredient_id: number | null;
+  quantity: string;
+}
+
 interface Line {
   key: number;
+  /** Existing line being edited (kept so nights that picked from it stay attached). */
+  id?: number;
   kind: "fixed" | "slot";
   label: string;
   ingredient_id: number | null;
   category_id: number | null;
   quantity: string;
   unit_hint: Unit | "";
+  multi: boolean;
+  options: Option[];
 }
 
 interface Draft {
   name: string;
+  item_type: TemplateType;
+  colour: string | null;
   lines: Line[];
 }
 
@@ -139,25 +160,42 @@ const blankLine = (kind: Line["kind"]): Line => ({
   category_id: null,
   quantity: "",
   unit_hint: "",
+  multi: false,
+  options: [],
 });
 
 function toDraft(t: Template): Draft {
   return {
     name: t.name,
+    item_type: t.item_type,
+    colour: t.colour,
     lines: t.lines.map((l) => ({
       key: nextKey++,
+      id: l.id,
       kind: l.ingredient_id === null ? "slot" : "fixed",
       label: l.label,
       ingredient_id: l.ingredient_id,
       category_id: l.category_id,
       quantity: l.quantity === null ? "" : String(l.quantity),
       unit_hint: l.unit_hint ?? "",
+      multi: l.multi,
+      options: l.options.map((o) => ({
+        key: nextKey++,
+        ingredient_id: o.ingredient_id,
+        quantity: o.quantity === null ? "" : String(o.quantity),
+      })),
     })),
   };
 }
 
 const snapshot = (d: Draft): string =>
-  JSON.stringify({ ...d, lines: d.lines.map(({ key: _k, ...l }) => l) });
+  JSON.stringify({
+    ...d,
+    lines: d.lines.map(({ key: _k, options, ...l }) => ({
+      ...l,
+      options: options.map(({ key: _o, ...o }) => o),
+    })),
+  });
 
 interface EditorProps {
   templateId: number | null;
@@ -178,12 +216,13 @@ function TemplateEditor({
   onSaved,
   onDeleted,
 }: EditorProps) {
-  const fresh: Draft = { name: "", lines: [blankLine("fixed"), blankLine("slot")] };
+  const fresh: Draft = { name: "", item_type: "meal", colour: null, lines: [blankLine("slot")] };
   const [draft, setDraft] = useState<Draft | null>(templateId === null ? fresh : null);
   const [saved, setSaved] = useState(templateId === null ? snapshot(fresh) : "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [creating, setCreating] = useState<{ key: number; name: string } | null>(null);
+  // The line (and, for a choice, which option) that is creating a new ingredient.
+  const [creating, setCreating] = useState<{ key: number; optKey?: number; name: string } | null>(null);
 
   useEffect(() => {
     if (templateId === null) return;
@@ -222,6 +261,12 @@ function TemplateEditor({
     update({ lines });
   };
   const unitOf = (id: number | null) => ingredients.find((i) => i.id === id)?.unit ?? "";
+  const updateOption = (lineKey: number, optKey: number, patch: Partial<Option>) =>
+    update({
+      lines: draft.lines.map((l) =>
+        l.key === lineKey ? { ...l, options: l.options.map((o) => (o.key === optKey ? { ...o, ...patch } : o)) } : l,
+      ),
+    });
 
   function buildInput() {
     if (!draft) return null;
@@ -249,10 +294,39 @@ function TemplateEditor({
           setError(`“${l.label}” is a fixed line: pick an ingredient and a quantity`);
           return null;
         }
-        lines.push({ label: l.label, ingredient_id: l.ingredient_id, category_id: null, quantity, unit_hint: null });
-      } else {
         lines.push({
+          id: l.id,
           label: l.label,
+          multi: false,
+          options: [],
+          ingredient_id: l.ingredient_id,
+          category_id: null,
+          quantity,
+          unit_hint: null,
+        });
+      } else {
+        const options = [];
+        for (const o of l.options) {
+          if (o.ingredient_id === null) {
+            setError(`“${l.label}”: pick an ingredient for every choice (or remove the empty one)`);
+            return null;
+          }
+          let amount: number | null = null;
+          if (o.quantity.trim() !== "") {
+            const parsed = parseQuantity(o.quantity, unitOf(o.ingredient_id));
+            if (!parsed.ok) {
+              setError(`“${l.label}”: ${parsed.error}`);
+              return null;
+            }
+            amount = parsed.value;
+          }
+          options.push({ ingredient_id: o.ingredient_id, quantity: amount });
+        }
+        lines.push({
+          id: l.id,
+          label: l.label,
+          multi: l.multi,
+          options,
           ingredient_id: null,
           category_id: l.category_id,
           quantity,
@@ -260,7 +334,7 @@ function TemplateEditor({
         });
       }
     }
-    return { name: draft.name, lines };
+    return { name: draft.name, item_type: draft.item_type, colour: draft.colour, lines };
   }
 
   async function save() {
@@ -283,7 +357,12 @@ function TemplateEditor({
 
   async function remove() {
     if (templateId === null) return;
-    if (!window.confirm(`Delete “${draft?.name}”? Meals already made from it keep their ingredients.`)) return;
+    if (
+      !window.confirm(
+        `Delete “${draft?.name}”? Nights already planned with it stay on the calendar and shopping list; meals made from it keep their ingredients.`,
+      )
+    )
+      return;
     try {
       await api.templates.delete(templateId);
       onDeleted();
@@ -307,12 +386,45 @@ function TemplateEditor({
           />
         </label>
 
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="text-xs text-slate-500">
+            Counts as
+            <select
+              value={draft.item_type}
+              onChange={(e) => update({ item_type: e.target.value as TemplateType })}
+              className={`${field} block text-slate-900`}
+            >
+              {TEMPLATE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {typeLabel(t)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-500">
+            Colour
+            <div className="flex items-center gap-1">
+              <input
+                type="color"
+                value={draft.colour ?? "#16a34a"}
+                onChange={(e) => update({ colour: e.target.value })}
+                className="h-8 w-10 cursor-pointer rounded border border-slate-300"
+              />
+              {draft.colour && (
+                <button type="button" onClick={() => update({ colour: null })} className="text-xs text-slate-400 hover:text-slate-700">
+                  clear
+                </button>
+              )}
+            </div>
+          </label>
+        </div>
+
         <section>
           <div className="mb-1 flex items-baseline justify-between">
             <h3 className="text-sm font-semibold">Lines</h3>
             <span className="text-xs text-slate-500">
-              <b>Fixed</b> lines are always included; <b>slots</b> are picked each time you use the
-              template.
+              <b>Fixed</b> lines are always included; a <b>choice</b> (e.g. Veg, Protein) is picked for
+              each night on the planner.
             </span>
           </div>
 
@@ -340,7 +452,7 @@ function TemplateEditor({
                     className={field}
                   >
                     <option value="fixed">Fixed ingredient</option>
-                    <option value="slot">Slot to fill</option>
+                    <option value="slot">Choice per night</option>
                   </select>
 
                   {line.kind === "fixed" ? (
@@ -422,7 +534,7 @@ function TemplateEditor({
                     ✕
                   </button>
                 </div>
-                {creating?.key === line.key && (
+                {creating?.key === line.key && creating.optKey === undefined && (
                   <div className="mt-2 rounded border border-emerald-200 bg-emerald-50 p-2">
                     <IngredientForm
                       categories={categories}
@@ -434,6 +546,83 @@ function TemplateEditor({
                       }}
                       onCancel={() => setCreating(null)}
                     />
+                  </div>
+                )}
+
+                {line.kind === "slot" && (
+                  <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
+                    <label className="flex items-center gap-2 text-xs text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={line.multi}
+                        onChange={(e) => updateLine(line.key, { multi: e.target.checked })}
+                      />
+                      Tick several each night (e.g. steamed veg: carrot <i>and</i> corn)
+                    </label>
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-500">
+                        Choices <span className="text-slate-400">— each with its usual amount. Leave empty to allow any
+                        ingredient in the category.</span>
+                      </div>
+                      {line.options.map((o) => (
+                        <div key={o.key}>
+                          <div className="flex items-center gap-2">
+                            <div className="min-w-0 flex-1">
+                              <IngredientPicker
+                                ingredients={ingredients}
+                                value={o.ingredient_id}
+                                onChange={(i) => updateOption(line.key, o.key, { ingredient_id: i.id })}
+                                onCreate={(name) => setCreating({ key: line.key, optKey: o.key, name })}
+                              />
+                            </div>
+                            <QuantityInput
+                              value={o.quantity}
+                              unit={unitOf(o.ingredient_id)}
+                              onChange={(text) => updateOption(line.key, o.key, { quantity: text })}
+                              placeholder="Amount"
+                              className={`${field} w-24 text-right`}
+                            />
+                            <span className="w-10 text-xs text-slate-500">{unitOf(o.ingredient_id)}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateLine(line.key, { options: line.options.filter((x) => x.key !== o.key) })
+                              }
+                              title="Remove choice"
+                              className="px-1 text-slate-400 hover:text-red-600"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {creating?.key === line.key && creating.optKey === o.key && (
+                            <div className="mt-1 rounded border border-emerald-200 bg-emerald-50 p-2">
+                              <IngredientForm
+                                categories={categories}
+                                initialName={creating.name}
+                                initialCategoryId={line.category_id}
+                                onSaved={(ing) => {
+                                  onIngredientCreated(ing);
+                                  updateOption(line.key, o.key, { ingredient_id: ing.id });
+                                  setCreating(null);
+                                }}
+                                onCancel={() => setCreating(null)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateLine(line.key, {
+                            options: [...line.options, { key: nextKey++, ingredient_id: null, quantity: "" }],
+                          })
+                        }
+                        className="text-xs font-medium text-emerald-700 hover:underline"
+                      >
+                        + Add choice
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -453,7 +642,7 @@ function TemplateEditor({
               onClick={() => update({ lines: [...draft.lines, blankLine("slot")] })}
               className="text-sm font-medium text-emerald-700 hover:underline"
             >
-              + Slot
+              + Choice per night
             </button>
           </div>
         </section>

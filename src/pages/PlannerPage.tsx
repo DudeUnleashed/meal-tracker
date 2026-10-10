@@ -16,10 +16,10 @@ import { PlannerActionsContext, type DragData, type PlannerActions } from "../co
 import { ChipBody, LeftoversBody } from "../components/calendar/cells";
 import ItemDrawer from "../components/ItemDrawer";
 import DayNotePopover from "../components/DayNotePopover";
-import ItemLibrary, { CardPreview, LeftoversPreview } from "../components/ItemLibrary";
+import ItemLibrary, { BlankPreview, CardPreview, LeftoversPreview } from "../components/ItemLibrary";
 import PlanEntryPopover from "../components/PlanEntryPopover";
 import SummaryPanel, { type SummaryMode } from "../components/SummaryPanel";
-import { api, errorMessage, type DayInfo, type PlanEntry } from "../lib/api";
+import { api, errorMessage, type DayInfo, type PlanEntry, type Slot } from "../lib/api";
 import { addDays } from "date-fns";
 import { fromIso, shiftWeeks, toIso, type WeekStart } from "../lib/dates";
 import { blockRange, shiftRange, stepAnchor } from "../lib/ranges";
@@ -27,15 +27,18 @@ import { blockRange, shiftRange, stepAnchor } from "../lib/ranges";
 const DEFAULT_VIEW: CalendarView = "2w";
 
 /**
- * Chips sit inside day cells and are both targets. Prefer the chip under the pointer
- * (drop = insert at its position); otherwise fall back to the day (drop = append).
+ * Chips sit inside slots inside day cells, and all are targets. Prefer the chip under the
+ * pointer (drop = insert at its position), then the slot (drop = append to it), then the day.
  */
 const collisionDetection: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
   const kindOf = (id: string | number) =>
     (args.droppableContainers.find((c) => c.id === id)?.data.current as DragData | undefined)?.kind;
-  const chip = hits.filter((h) => kindOf(h.id) === "entry");
-  return chip.length ? chip : hits;
+  for (const kind of ["entry", "slot"]) {
+    const found = hits.filter((h) => kindOf(h.id) === kind);
+    if (found.length) return found;
+  }
+  return hits;
 };
 
 export default function PlannerPage() {
@@ -54,6 +57,8 @@ export default function PlannerPage() {
   // Any date inside the block on screen; the summary follows it.
   const [anchor, setAnchor] = useState(() => toIso(new Date()));
   const [summaryOpen, setSummaryOpen] = useState(false);
+  // Lunch / breakfast / snacks the user added to a day but hasn't put anything in yet.
+  const [openSlots, setOpenSlots] = useState<Record<string, Slot[]>>({});
   // A user-picked summary range that no longer follows the calendar (null = follow the view).
   const [custom, setCustom] = useState<{ start: string; end: string } | null>(null);
 
@@ -114,9 +119,35 @@ export default function PlannerPage() {
         }
       },
       removeLeftovers: (date: string) => mutate(() => api.dayInfo.set(date, { leftovers: false })),
+      openSlots,
+      showSlot: (date: string, slot: Slot) =>
+        setOpenSlots((prev) => ({ ...prev, [date]: [...(prev[date] ?? []), slot] })),
     }),
-    [mutate],
+    [mutate, openSlots],
   );
+
+  /**
+   * Adds something to the plan and, for things that need details (a template's veg, a blank's
+   * title), opens its popover straight away on the new chip.
+   */
+  async function addAndOpen(add: () => Promise<PlanEntry>) {
+    try {
+      setError(null);
+      const entry = await add();
+      setRefreshKey((k) => k + 1);
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        const el = document.querySelector(`[data-entry="${entry.id}"]`);
+        if (el) {
+          setPopover({ entry, anchor: el.getBoundingClientRect() });
+          return;
+        }
+      }
+    } catch (e) {
+      setError(errorMessage(e));
+      setRefreshKey((k) => k + 1);
+    }
+  }
 
   const reload = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -137,7 +168,7 @@ export default function PlannerPage() {
     }
   }
 
-  /** Fills the block on screen with the dinners from the block just before it. */
+  /** Fills the block on screen with the meals from the block just before it. */
   async function copyPrevious() {
     if (weekStart === null || (view !== "1w" && view !== "2w")) return;
     const b = blockRange(view, anchor, weekStart);
@@ -150,7 +181,7 @@ export default function PlannerPage() {
       if (
         existing.length > 0 &&
         !window.confirm(
-          `This ${noun} already has ${existing.length} planned ${existing.length === 1 ? "item" : "items"}. Add last ${noun}'s dinners on top of them?`,
+          `This ${noun} already has ${existing.length} planned ${existing.length === 1 ? "item" : "items"}. Add last ${noun}'s meals on top of them?`,
         )
       )
         return;
@@ -158,8 +189,8 @@ export default function PlannerPage() {
       reload();
       setNotice(
         r.copied === 0
-          ? `Nothing to copy — last ${noun} has no dinners planned.`
-          : `Copied ${r.copied} ${r.copied === 1 ? "dinner" : "dinners"} from last ${noun}` +
+          ? `Nothing to copy — last ${noun} has nothing planned.`
+          : `Copied ${r.copied} ${r.copied === 1 ? "meal" : "meals"} from last ${noun}` +
               (r.skipped_archived ? ` (${r.skipped_archived} skipped: archived items)` : "") +
               ".",
       );
@@ -203,7 +234,7 @@ export default function PlannerPage() {
     setDragging(null);
     const from = active.data.current as DragData | undefined;
     const to = over?.data.current as DragData | undefined;
-    if (!from || (to?.kind !== "day" && to?.kind !== "entry")) return;
+    if (!from || (to?.kind !== "day" && to?.kind !== "entry" && to?.kind !== "slot")) return;
     const date = to.date;
 
     // The Leftovers tag: from the library onto a day, or moved from one day to another.
@@ -216,14 +247,20 @@ export default function PlannerPage() {
       return;
     }
 
-    // Dropping on a day appends; dropping on a chip takes that chip's place.
+    // Dropping on a chip takes that chip's place; on a slot it goes to the end of that slot; on
+    // the bare day, new things go to their usual slot and moved things keep theirs.
     if (to.kind === "entry" && from.kind === "entry" && from.entryId === to.entryId) return; // on itself
-    const position = to.kind === "day" ? to.count : to.index;
+    const slot: Slot | undefined = to.kind === "day" ? undefined : to.slot;
+    const position = to.kind === "entry" ? to.index : to.kind === "slot" ? to.count : undefined;
 
     if (from.kind === "item") {
-      mutate(() => api.plan.add(from.itemId, date, undefined, to.kind === "entry" ? position : undefined));
+      const add = () => api.plan.add(from.itemId, date, { slot, position: to.kind === "entry" ? position : undefined });
+      if (from.template) addAndOpen(add);
+      else mutate(add);
+    } else if (from.kind === "blank") {
+      addAndOpen(() => api.plan.addBlank(date, { slot, position: to.kind === "entry" ? position : undefined }));
     } else if (from.kind === "entry") {
-      mutate(() => api.plan.move(from.entryId, date, position));
+      mutate(() => api.plan.move(from.entryId, date, position ?? 1000, slot));
     }
   }
 
@@ -314,6 +351,7 @@ export default function PlannerPage() {
 
       <DragOverlay dropAnimation={null}>
         {dragging?.kind === "item" && <CardPreview name={dragging.name} colour={dragging.colour} />}
+        {dragging?.kind === "blank" && <BlankPreview />}
         {(dragging?.kind === "leftovers" || dragging?.kind === "leftovers-chip") &&
           (dragging.kind === "leftovers" ? (
             <LeftoversPreview />

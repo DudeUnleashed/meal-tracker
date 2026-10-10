@@ -28,8 +28,30 @@ export interface IngredientInput {
 }
 
 // Item type: what an item *is* on the calendar.
-export type ItemType = "meal" | "meat" | "side";
-export const ITEM_TYPES: ItemType[] = ["meal", "meat", "side"];
+export type ItemType = "meal" | "meat" | "side" | "sweet";
+export const ITEM_TYPES: ItemType[] = ["meal", "meat", "side", "sweet"];
+/** A planned entry can also be the hidden Blank (takeaway etc.) token. */
+export type EntryType = ItemType | "blank";
+
+const TYPE_LABELS: Record<EntryType, string> = {
+  meal: "Meal",
+  meat: "Meat",
+  side: "Side",
+  sweet: "Sweet/Savory",
+  blank: "Blank",
+};
+/** "sweet" is stored; people see "Sweet/Savory". */
+export const typeLabel = (t: EntryType): string => TYPE_LABELS[t];
+
+/** Parts of a day. Dinner is always there; the others appear when you add them. */
+export type Slot = "breakfast" | "lunch" | "dinner" | "snack";
+export const SLOTS: Slot[] = ["breakfast", "lunch", "dinner", "snack"];
+export const SLOT_LABELS: Record<Slot, string> = {
+  breakfast: "Breakfast",
+  lunch: "Lunch",
+  dinner: "Dinner",
+  snack: "Snacks",
+};
 
 export interface ItemSummary {
   id: number;
@@ -38,6 +60,8 @@ export interface ItemSummary {
   colour: string | null;
   archived: boolean;
   ingredient_count: number;
+  /** Set for a template's chip: edited in Library → Templates. */
+  live_template_id: number | null;
 }
 
 export interface ItemLine {
@@ -56,6 +80,7 @@ export interface Item {
   notes: string | null;
   template_id: number | null;
   archived: boolean;
+  live_template_id: number | null;
   lines: ItemLine[];
 }
 
@@ -106,7 +131,7 @@ export interface PlanEntry {
   date: string;
   item_id: number;
   item_name: string;
-  item_type: ItemType;
+  item_type: EntryType;
   item_colour: string | null;
   item_archived: boolean;
   /** Meat entries only. */
@@ -115,6 +140,28 @@ export interface PlanEntry {
   position: number;
   /** Size multiplier for meal and side entries (1 = one night's amount). Meat uses serves. */
   scale: number;
+  slot: Slot;
+  /** Title of a Blank entry. */
+  label: string | null;
+  /** Set for a template chip. */
+  template_id: number | null;
+  /** What this night chose for the template's slots. */
+  picks: Pick[];
+}
+
+export interface Pick {
+  line_id: number | null;
+  ingredient_id: number;
+  ingredient_name: string;
+  unit: Unit;
+  quantity: number;
+}
+
+/** `quantity` omitted = the template's default for that ingredient. */
+export interface PickInput {
+  line_id: number | null;
+  ingredient_id: number;
+  quantity?: number;
 }
 
 /** A note and/or the Leftovers marker on a day (not tied to any dinner). */
@@ -190,6 +237,7 @@ export interface ImportSummary {
 export interface TemplateSummary {
   id: number;
   name: string;
+  item_type: TemplateType;
   fixed_count: number;
   slot_count: number;
 }
@@ -206,18 +254,45 @@ export interface TemplateLine {
   category_name: string | null;
   quantity: number | null;
   unit_hint: Unit | null;
+  /** Several ingredients can be ticked on one night (steamed veg). */
+  multi: boolean;
+  /** Candidate ingredients; empty = anything in the category. */
+  options: TemplateOption[];
 }
+
+export interface TemplateOption {
+  id: number;
+  ingredient_id: number;
+  ingredient_name: string;
+  ingredient_unit: Unit;
+  /** Default amount, in the ingredient's own unit. */
+  quantity: number | null;
+}
+
+/** What a template's chip is on the calendar (no meat: that scales by serves). */
+export type TemplateType = "meal" | "side" | "sweet";
+export const TEMPLATE_TYPES: TemplateType[] = ["meal", "side", "sweet"];
 
 export interface Template {
   id: number;
   name: string;
+  item_type: TemplateType;
+  colour: string | null;
+  /** The chip in the planner's library. */
+  item_id: number | null;
   lines: TemplateLine[];
 }
 
 export interface TemplateInput {
   name: string;
+  item_type: TemplateType;
+  colour: string | null;
   lines: {
+    /** Keep the id of an existing line so nights that picked from it stay attached. */
+    id?: number;
     label: string;
+    multi: boolean;
+    options: { ingredient_id: number; quantity: number | null }[];
     ingredient_id: number | null;
     category_id: number | null;
     quantity: number | null;
@@ -288,19 +363,43 @@ export const api = {
   },
   plan: {
     list: (start: string, end: string) => invoke<PlanEntry[]>("plan_list", { start, end }),
-    /** `position` (0-based) inserts before that entry; omit to append to the day. */
-    add: (itemId: number, date: string, serves?: number, position?: number) =>
-      invoke<PlanEntry>("plan_add", { itemId, date, serves: serves ?? null, position: position ?? null }),
-    /** Moves to `date` at 0-based `position` in that day (clamped to the end). */
-    move: (id: number, date: string, position: number) =>
-      invoke<PlanEntry>("plan_move", { id, date, position }),
-    /** Omitted fields are unchanged; a blank note clears it. */
-    update: (id: number, patch: { serves?: number; note?: string; scale?: number }) =>
+    /**
+     * `slot` omitted = dinner (snacks for Sweet/Savory items). `position` (0-based) inserts
+     * before that entry in the slot; omit to append.
+     */
+    add: (itemId: number, date: string, opts: { slot?: Slot; serves?: number; position?: number } = {}) =>
+      invoke<PlanEntry>("plan_add", {
+        itemId,
+        date,
+        slot: opts.slot ?? null,
+        serves: opts.serves ?? null,
+        position: opts.position ?? null,
+      }),
+    /** The Blank token: a night out, takeaway etc. with a title you type. */
+    addBlank: (date: string, opts: { slot?: Slot; label?: string; position?: number } = {}) =>
+      invoke<PlanEntry>("plan_add_blank", {
+        date,
+        slot: opts.slot ?? null,
+        label: opts.label ?? null,
+        position: opts.position ?? null,
+      }),
+    /** Moves to `date` at 0-based `position` in the slot (default: keeps its slot; clamped to the end). */
+    move: (id: number, date: string, position: number, slot?: Slot) =>
+      invoke<PlanEntry>("plan_move", { id, date, slot: slot ?? null, position }),
+    /** Omitted fields are unchanged; a blank note (or label) clears it. */
+    update: (id: number, patch: { serves?: number; note?: string; scale?: number; label?: string }) =>
       invoke<PlanEntry>("plan_update", {
         id,
         serves: patch.serves ?? null,
         note: patch.note ?? null,
         scale: patch.scale ?? null,
+        label: patch.label ?? null,
+      }),
+    /** Replaces what a template chip picked for this night. */
+    setPicks: (id: number, picks: PickInput[]) =>
+      invoke<PlanEntry>("plan_set_picks", {
+        id,
+        picks: picks.map((p) => ({ line_id: p.line_id, ingredient_id: p.ingredient_id, quantity: p.quantity ?? null })),
       }),
     /** Reverts the most recent plan change; resolves to what was undone, or null if nothing was. */
     undo: () => invoke<string | null>("plan_undo"),

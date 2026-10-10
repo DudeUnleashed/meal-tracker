@@ -1,7 +1,8 @@
 import { format } from "date-fns";
 import { useEffect, useRef, useState } from "react";
-import { api, errorMessage, type PlanEntry } from "../lib/api";
+import { api, errorMessage, SLOT_LABELS, typeLabel, type PlanEntry } from "../lib/api";
 import { fromIso } from "../lib/dates";
+import TemplatePicks from "./TemplatePicks";
 
 const WIDTH = 288;
 
@@ -23,15 +24,26 @@ interface Props {
 export default function PlanEntryPopover({ entry: initial, anchor, onClose, onChanged, onEditItem }: Props) {
   const [entry, setEntry] = useState(initial);
   const [note, setNote] = useState(initial.note ?? "");
+  const [label, setLabel] = useState(initial.label ?? "");
   const [error, setError] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
+  const blank = entry.item_type === "blank";
+  const template = entry.template_id !== null;
+
+  /** Saves the note (and a Blank's title) if either changed. */
   async function saveNote(): Promise<void> {
-    if (note.trim() === (entry.note ?? "")) return;
+    const noteChanged = note.trim() !== (entry.note ?? "");
+    const labelChanged = blank && label.trim() !== (entry.label ?? "");
+    if (!noteChanged && !labelChanged) return;
     try {
-      const updated = await api.plan.update(entry.id, { note });
+      const updated = await api.plan.update(entry.id, {
+        ...(noteChanged ? { note } : {}),
+        ...(labelChanged ? { label } : {}),
+      });
       setEntry(updated);
       setNote(updated.note ?? "");
+      setLabel(updated.label ?? "");
       onChanged();
     } catch (e) {
       setError(errorMessage(e));
@@ -90,13 +102,14 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
   // Below the chip, clamped to the window; flipped above when there is no room.
   const left = Math.max(8, Math.min(anchor.left, window.innerWidth - WIDTH - 8));
   const below = anchor.bottom + 6;
-  const top = below + 330 > window.innerHeight ? Math.max(8, anchor.top - 336) : below;
+  const height = template ? 520 : 340;
+  const top = below + height > window.innerHeight ? Math.max(8, Math.min(anchor.top - height - 6, window.innerHeight - height - 8)) : below;
 
   return (
     <div
       ref={root}
       style={{ left, top, width: WIDTH }}
-      className="fixed z-50 space-y-3 rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-xl"
+      className="fixed z-50 max-h-[calc(100vh-16px)] space-y-3 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-xl"
     >
       <div>
         <div className="flex items-center gap-2">
@@ -104,11 +117,36 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
             className="h-3 w-3 shrink-0 rounded-full"
             style={{ background: entry.item_colour ?? "#94a3b8" }}
           />
-          <span className="flex-1 truncate font-semibold">{entry.item_name}</span>
-          <span className="text-xs capitalize text-slate-400">{entry.item_type}</span>
+          {blank ? (
+            <input
+              autoFocus
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              onBlur={saveNote}
+              onKeyDown={(e) => e.key === "Enter" && closeAndSave()}
+              placeholder="What's on? e.g. Thai takeaway"
+              className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-sm font-semibold"
+            />
+          ) : (
+            <span className="flex-1 truncate font-semibold">{entry.item_name}</span>
+          )}
+          <span className="text-xs text-slate-400">{typeLabel(entry.item_type)}</span>
         </div>
-        <div className="text-xs text-slate-500">{format(fromIso(entry.date), "EEEE d MMMM")}</div>
+        <div className="text-xs text-slate-500">
+          {format(fromIso(entry.date), "EEEE d MMMM")}
+          {entry.slot !== "dinner" && ` · ${SLOT_LABELS[entry.slot]}`}
+        </div>
       </div>
+
+      {template && (
+        <TemplatePicks
+          entry={entry}
+          onChange={(updated) => {
+            setEntry(updated);
+            onChanged();
+          }}
+        />
+      )}
 
       {entry.serves !== null && (
         <div className="flex items-center gap-2">
@@ -132,7 +170,7 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
         </div>
       )}
 
-      {entry.item_type !== "meat" && (
+      {entry.item_type !== "meat" && !blank && (
         <div>
           <div className="mb-1 text-xs text-slate-500">
             Size <span className="text-slate-400">— 1 is the usual one night’s amount</span>
@@ -159,7 +197,7 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
       <label className="block text-xs text-slate-500">
         Note
         <textarea
-          autoFocus
+          autoFocus={!blank}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           onBlur={saveNote}
@@ -176,16 +214,18 @@ export default function PlanEntryPopover({ entry: initial, anchor, onClose, onCh
         <button onClick={remove} className="rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50">
           Remove
         </button>
-        <button
-          onClick={async () => {
-            await saveNote();
-            onEditItem(entry.item_id);
-            onClose();
-          }}
-          className="rounded px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50"
-        >
-          Edit item
-        </button>
+        {!blank && !template && (
+          <button
+            onClick={async () => {
+              await saveNote();
+              onEditItem(entry.item_id);
+              onClose();
+            }}
+            className="rounded px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50"
+          >
+            Edit item
+          </button>
+        )}
         <button
           onClick={closeAndSave}
           className="ml-auto rounded bg-slate-100 px-3 py-1 text-xs font-medium hover:bg-slate-200"

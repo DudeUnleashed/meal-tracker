@@ -5,6 +5,7 @@ import {
   api,
   errorMessage,
   ITEM_TYPES,
+  typeLabel,
   type ItemSummary,
   type ItemType,
   type ItemUsage,
@@ -81,7 +82,10 @@ export default function ItemLibrary({ refreshKey }: Props) {
         {!suggestions.meal && !suggestions.meat && !suggestions.side && (
           <p className="text-xs text-slate-400">Nothing to suggest yet — add some items in the Library.</p>
         )}
-        <LeftoversTag />
+        <div className="flex gap-2">
+          <LeftoversTag />
+          <BlankTag />
+        </div>
       </div>
       <div className="space-y-2 border-b border-slate-200 p-3">
         <input
@@ -98,13 +102,13 @@ export default function ItemLibrary({ refreshKey }: Props) {
                 setTab(t);
                 setSearch("");
               }}
-              className={`flex-1 rounded px-2 py-1 text-xs font-medium capitalize ${
+              className={`flex-1 rounded px-1 py-1 text-xs font-medium ${
                 !q && tab === t
                   ? "bg-emerald-600 text-white"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
-              {t}
+              {t === "sweet" ? "Sweet/Savory" : typeLabel(t)}
             </button>
           ))}
         </div>
@@ -134,7 +138,13 @@ export default function ItemLibrary({ refreshKey }: Props) {
 
 /** A compact, draggable suggestion: drop it on a day like any other card. */
 function SuggestionCard({ item, usage }: { item: ItemSummary; usage: ItemUsage | undefined }) {
-  const data: DragData = { kind: "item", itemId: item.id, name: item.name, colour: item.colour };
+  const data: DragData = {
+    kind: "item",
+    itemId: item.id,
+    name: item.name,
+    colour: item.colour,
+    template: item.live_template_id !== null,
+  };
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `suggest:${item.id}`, data });
   const today = new Date();
 
@@ -150,7 +160,7 @@ function SuggestionCard({ item, usage }: { item: ItemSummary; usage: ItemUsage |
     >
       <div className="flex items-baseline gap-2">
         <span className="flex-1 truncate">{item.name}</span>
-        <span className="text-xs capitalize text-slate-400">{item.type}</span>
+        <span className="text-xs text-slate-400">{typeLabel(item.type)}</span>
       </div>
       <div className="text-xs text-slate-400">
         {usage?.last_had ? `last had ${lastHadText(usage.last_had, today)}` : "not had yet"}
@@ -169,11 +179,38 @@ function LeftoversTag() {
       {...listeners}
       {...attributes}
       title="Drag onto a day to mark it as a leftovers night"
-      className={`touch-none cursor-grab rounded border border-dashed border-teal-400 bg-teal-50 px-2 py-1.5 text-sm text-teal-800 hover:bg-teal-100 ${
+      className={`flex-1 touch-none cursor-grab rounded border border-dashed border-teal-400 bg-teal-50 px-2 py-1.5 text-sm text-teal-800 hover:bg-teal-100 ${
         isDragging ? "opacity-30" : ""
       }`}
     >
-      🍲 Leftovers <span className="text-xs text-teal-600">— drag onto a day</span>
+      🍲 Leftovers
+    </div>
+  );
+}
+
+/** The Blank token: drop it on a day, then say what it is (takeaway, dinner out…). */
+function BlankTag() {
+  const data: DragData = { kind: "blank" };
+  const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: "blank-tag", data });
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      title="Drag onto a day for takeaway, eating out, or anything that isn't a recipe"
+      className={`flex-1 touch-none cursor-grab rounded border border-dashed border-slate-400 bg-slate-100 px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-200 ${
+        isDragging ? "opacity-30" : ""
+      }`}
+    >
+      🥡 Blank
+    </div>
+  );
+}
+
+export function BlankPreview() {
+  return (
+    <div className="w-40 cursor-grabbing rounded border border-dashed border-slate-400 bg-slate-100 px-2 py-1.5 text-sm text-slate-700 shadow-lg">
+      🥡 Blank
     </div>
   );
 }
@@ -195,7 +232,13 @@ function LibraryCard({
   usage: ItemUsage | undefined;
   showType: boolean;
 }) {
-  const data: DragData = { kind: "item", itemId: item.id, name: item.name, colour: item.colour };
+  const data: DragData = {
+    kind: "item",
+    itemId: item.id,
+    name: item.name,
+    colour: item.colour,
+    template: item.live_template_id !== null,
+  };
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
     id: `item:${item.id}`,
     data,
@@ -219,7 +262,12 @@ function LibraryCard({
     >
       <div className="flex items-center gap-2">
         <span className="flex-1 truncate">{item.name}</span>
-        {showType && <span className="text-xs capitalize text-slate-400">{item.type}</span>}
+        {item.live_template_id !== null && (
+          <span title="Template: choose its ingredients per night" className="text-xs">
+            🧩
+          </span>
+        )}
+        {showType && <span className="text-xs text-slate-400">{typeLabel(item.type)}</span>}
       </div>
       <div className="text-xs text-slate-400">
         {status.length ? status.join(" · ") : "not had yet"}
